@@ -807,6 +807,7 @@ namespace diskann {
       init_ids.emplace_back(pt);
 
     diskann::Timer link_timer;
+    // 2 rounds, NUM_RANDS = 2, alpha = 1 & alpha = 1.2/1.3 ...
     for (uint32_t rnd_no = 0; rnd_no < NUM_RNDS; rnd_no++) {
       L = Lvec[rnd_no];
 

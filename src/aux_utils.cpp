@@ -379,6 +379,8 @@ namespace diskann {
 
     double full_index_ram =
         ESTIMATE_RAM_USAGE(base_num, base_dim, sizeof(T), R);
+    
+    // if has enough memory space, don't merge, build in one shot
     if (full_index_ram < ram_budget * 1024 * 1024 * 1024) {
       diskann::cout << "Full index fits in RAM budget, should consume at most "
                     << full_index_ram / (1024 * 1024 * 1024)
@@ -401,6 +403,7 @@ namespace diskann {
       std::remove(centroids_file.c_str());
       return 0;
     }
+    // else split build
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
     int         num_parts =
         partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget,
@@ -645,8 +648,8 @@ namespace diskann {
     std::string              cur_param;
     std::vector<std::string> param_list;
     while (parser >> cur_param)
-      param_list.push_back(cur_param);
-
+      param_list.push_back(cur_param); // incoming parameters
+    // check parameters
     if (param_list.size() != 5 && param_list.size() != 6) {
       diskann::cout
           << "Correct usage of parameters is R (max degree) "
@@ -658,7 +661,8 @@ namespace diskann {
           << std::endl;
       return false;
     }
-
+    
+    // check
     if (!std::is_same<T, float>::value &&
         compareMetric == diskann::Metric::INNER_PRODUCT) {
       std::stringstream stream;
@@ -667,7 +671,8 @@ namespace diskann {
              << std::endl;
       throw diskann::ANNException(stream.str(), -1);
     }
-
+    
+    // uint32
     _u32 disk_pq_dims = 0;
     bool use_disk_pq = false;
 
@@ -717,23 +722,24 @@ namespace diskann {
       diskann::save_bin<float>(norm_file, &max_norm_of_base, 1, 1);
     }
 
-    unsigned R = (unsigned) atoi(param_list[0].c_str());
-    unsigned L = (unsigned) atoi(param_list[1].c_str());
+    unsigned R = (unsigned) atoi(param_list[0].c_str());// max out degree
+    unsigned L = (unsigned) atoi(param_list[1].c_str()); // beamSearch the size of candidates list
 
-    double final_index_ram_limit = get_memory_budget(param_list[2]);
+    //bytes!!!
+    double final_index_ram_limit = get_memory_budget(param_list[2]); // RAM threshold when processing query
     if (final_index_ram_limit <= 0) {
       std::cerr << "Insufficient memory budget (or string was not in right "
                    "format). Should be > 0."
                 << std::endl;
       return false;
     }
-    double indexing_ram_budget = (float) atof(param_list[3].c_str());
+    double indexing_ram_budget = (float) atof(param_list[3].c_str()); // RAN threshold when building index
     if (indexing_ram_budget <= 0) {
       std::cerr << "Not building index. Please provide more RAM budget"
                 << std::endl;
       return false;
     }
-    _u32 num_threads = (_u32) atoi(param_list[4].c_str());
+    _u32 num_threads = (_u32) atoi(param_list[4].c_str()); // number of threads
 
     if (num_threads != 0) {
       omp_set_num_threads(num_threads);
@@ -745,19 +751,20 @@ namespace diskann {
                   << " Indexing ram budget: " << indexing_ram_budget
                   << " T: " << num_threads << std::endl;
 
-    auto s = std::chrono::high_resolution_clock::now();
+    auto s = std::chrono::high_resolution_clock::now(); // start time point
 
     size_t points_num, dim;
 
-    diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
+    diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim); // get first 8 bytes - points_num, dimension
 
     size_t num_pq_chunks =
-        (size_t)(std::floor)(_u64(final_index_ram_limit / points_num));
+        (size_t)(std::floor)(_u64(final_index_ram_limit / points_num)); // footprint for each points
+                                                                        // i.e. pq_chunks
 
-    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks; // max(1, num_pq_chunks)
+    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks; // max(dim, num_pq_chunks)
     num_pq_chunks =
-        num_pq_chunks > MAX_PQ_CHUNKS ? MAX_PQ_CHUNKS : num_pq_chunks;
+        num_pq_chunks > MAX_PQ_CHUNKS ? MAX_PQ_CHUNKS : num_pq_chunks; // max(MAX_PQ_CHUNKS, num_pq_chunks)
 
     diskann::cout << "Compressing " << dim << "-dimensional data into "
                   << num_pq_chunks << " bytes per vector." << std::endl;
@@ -765,6 +772,7 @@ namespace diskann {
     size_t train_size, train_dim;
     float *train_data;
 
+    // sample with probability p_val
     double p_val = ((double) TRAINING_SET_SIZE / (double) points_num);
     // generates random sample and sets it to train_data and updates
     // train_size
@@ -796,11 +804,14 @@ namespace diskann {
     bool make_zero_mean = true;
     if (compareMetric == diskann::Metric::INNER_PRODUCT)
       make_zero_mean = false;
-
+    
+    // hard code 256, num_centers:256
+    // divide vector to num_pq_chunks parts
     generate_pq_pivots(train_data, train_size, (uint32_t) dim, 256,
                        (uint32_t) num_pq_chunks, NUM_KMEANS_REPS,
                        pq_pivots_path, make_zero_mean);
-
+    
+    //generate pq data, use pq pivots
     generate_pq_data_from_pivots<T>(data_file_to_use.c_str(), 256,
                                     (uint32_t) num_pq_chunks, pq_pivots_path,
                                     pq_compressed_vectors_path);

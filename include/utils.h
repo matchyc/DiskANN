@@ -13,6 +13,7 @@
 #include <memory>
 #include <random>
 #include <set>
+#include <xmmintrin.h>
 #ifdef __APPLE__
 #else
 #include <malloc.h>
@@ -462,7 +463,6 @@ namespace diskann {
   }
 
   // load_aligned_bin functions START
-
   template<typename T>
   inline void load_aligned_bin_impl(std::basic_istream<char>& reader,
                                     size_t actual_file_size, T*& data,
