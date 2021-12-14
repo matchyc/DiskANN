@@ -139,6 +139,9 @@ namespace diskann {
         _store_data(store_data) {
     // data is stored to _nd * aligned_dim matrix with necessary
     // zero-padding
+    
+    // despite the first two parameters, the others are useless in DiskANN, I guess it's for FreshDiskANN...
+    // which means when microsoft finished DiskANN, they completed or have tried FreshDiskANN as the same time.
     diskann::cout << "Number of frozen points = " << _num_frozen_pts
                   << std::endl;
     load_aligned_bin<T>(std::string(filename), _data, _nd, _dim, _aligned_dim);
@@ -429,6 +432,7 @@ namespace diskann {
     tsl::robin_set<unsigned> inserted_into_pool;
     inserted_into_pool.reserve(Lsize * 20);
 
+    // add all nodes in init_ids into initial best_L_nodes & inserted_into_pool
     for (auto id : init_ids) {
       assert(id < _max_points);
       nn = Neighbor(id,
@@ -446,7 +450,7 @@ namespace diskann {
     /* sort best_L_nodes based on distance of each point to node_coords */
     std::sort(best_L_nodes.begin(), best_L_nodes.begin() + l);
     unsigned k = 0;
-    uint32_t hops = 0;
+    uint32_t hops = 0; // never used?
     uint32_t cmps = 0;
 
     while (k < l) {
@@ -457,7 +461,7 @@ namespace diskann {
         auto n = best_L_nodes[k].id;
         expanded_nodes_info.emplace_back(best_L_nodes[k]);
         expanded_nodes_ids.insert(n);
-
+        // for every node in best_L_nodes, check it's neighbors
         for (unsigned m = 0; m < _final_graph[n].size(); ++m) {
           unsigned id = _final_graph[n][m];
           if (inserted_into_pool.find(id) == inserted_into_pool.end()) {
@@ -465,7 +469,7 @@ namespace diskann {
 
             if ((m + 1) < _final_graph[n].size()) {
               auto nextn = _final_graph[n][m + 1];
-              diskann::prefetch_vector(
+              diskann::prefetch_vector( // prefetch data into cache line(64bytes), this situation, to L0 cache
                   (const char *) _data + _aligned_dim * (size_t) nextn,
                   sizeof(T) * _aligned_dim);
             }
@@ -474,10 +478,12 @@ namespace diskann {
             float dist = _distance->compare(node_coords,
                                             _data + _aligned_dim * (size_t) id,
                                             (unsigned) _aligned_dim);
-
+            // if distance less than the last node in best_L_nodes, 
+            // insert into best_L_nodes,
+            // otherwise, continue
             if (dist >= best_L_nodes[l - 1].distance && (l == Lsize))
               continue;
-
+            // binary search to find the right position for current node
             Neighbor nn(id, dist, true);
             unsigned r = InsertIntoPool(best_L_nodes.data(), l, nn);
             if (l < Lsize)
@@ -486,13 +492,15 @@ namespace diskann {
               nk = r;
           }
         }
-
+        // the best K nodes were updated, so update k
+        // or ++k instead
         if (nk <= k)
           k = nk;
         else
           ++k;
-      } else
+      } else { // visited
         k++;
+      }
     }
     return std::make_pair(hops, cmps);
   }
@@ -741,7 +749,7 @@ namespace diskann {
       omp_set_num_threads(NUM_THREADS);
 
     uint32_t NUM_SYNCS =
-        (unsigned) DIV_ROUND_UP(_nd + _num_frozen_pts, (64 * 64));
+        (unsigned) DIV_ROUND_UP(_nd + _num_frozen_pts, (64 * 64)); // 4096 points per round?
     if (NUM_SYNCS < 40)
       NUM_SYNCS = 40;
     diskann::cout << "Number of syncs: " << NUM_SYNCS << std::endl;
@@ -788,10 +796,10 @@ namespace diskann {
       _in_graph.reserve(_max_points + _num_frozen_pts);
       _in_graph.resize(_max_points + _num_frozen_pts);
     }
-
+      
     for (uint64_t p = 0; p < _max_points + _num_frozen_pts; p++) {
       _final_graph[p].reserve((size_t)(std::ceil(range * SLACK_FACTOR * 1.05)));
-    }
+    } 
 
     std::random_device               rd;
     std::mt19937                     gen(rd());
@@ -810,22 +818,24 @@ namespace diskann {
     // 2 rounds, NUM_RANDS = 2, alpha = 1 & alpha = 1.2/1.3 ...
     for (uint32_t rnd_no = 0; rnd_no < NUM_RNDS; rnd_no++) {
       L = Lvec[rnd_no];
-
-      if (rnd_no == NUM_RNDS - 1) {
+      // 2 round, first round L = Lvec[0]
+      if (rnd_no == NUM_RNDS - 1) {// if it's the last round
         if (last_round_alpha > 1)
           parameters.Set<float>("alpha", last_round_alpha);
       }
-
+      
       double   sync_time = 0, total_sync_time = 0;
       double   inter_time = 0, total_inter_time = 0;
       size_t   inter_count = 0, total_inter_count = 0;
       unsigned progress_counter = 0;
 
+      // round_size: res round_up
       size_t round_size = DIV_ROUND_UP(_nd, NUM_SYNCS);  // size of each batch
       std::vector<unsigned> need_to_sync(_max_points + _num_frozen_pts, 0);
-
+      
       std::vector<std::vector<unsigned>> pruned_list_vector(round_size);
 
+      // for each round
       for (uint32_t sync_num = 0; sync_num < NUM_SYNCS; sync_num++) {
         size_t start_id = sync_num * round_size;
         size_t end_id =
@@ -837,8 +847,9 @@ namespace diskann {
 #pragma omp parallel for schedule(dynamic)
         for (_s64 node_ctr = (_s64) start_id; node_ctr < (_s64) end_id;
              ++node_ctr) {
+          // for each node in one round
           auto                     node = visit_order[node_ctr];
-          size_t                   node_offset = node_ctr - start_id;
+          size_t                   node_offset = node_ctr - start_id;// offset inner round
           tsl::robin_set<unsigned> visited;
           std::vector<unsigned> &pruned_list = pruned_list_vector[node_offset];
           // get nearest neighbors of n in tmp. pool contains all the
@@ -847,6 +858,7 @@ namespace diskann {
           std::vector<Neighbor> pool;
           pool.reserve(L * 2);
           visited.reserve(L * 2);
+          // mark: here 2021-12-13 21:15 chenmeng
           get_expanded_nodes(node, L, init_ids, pool, visited);
           /* check the neighbors of the query that are not part of
            * visited, check their distance to the query, and add it to
@@ -990,8 +1002,8 @@ namespace diskann {
 
   template<typename T, typename TagT>
   void Index<T, TagT>::build(Parameters &             parameters,
-                             const std::vector<TagT> &tags) {
-    if (_enable_tags) {
+                             const std::vector<TagT> &tags) {     
+    if (_enable_tags) {   //tags?
       if (tags.size() != _nd) {
         std::cerr << "#Tags should be equal to #points" << std::endl;
         throw diskann::ANNException("#Tags must be equal to #points", -1,

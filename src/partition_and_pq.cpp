@@ -582,31 +582,34 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test,
                            std::vector<size_t> &cluster_sizes) {
   cluster_sizes.clear();
 
-  size_t *shard_counts = new size_t[num_centers];
+  size_t *shard_counts = new size_t[num_centers]; // num_centers: split index count
 
   for (size_t i = 0; i < num_centers; i++) {
     shard_counts[i] = 0;
   }
 
-  size_t block_size = num_test <= BLOCK_SIZE ? num_test : BLOCK_SIZE;
-  _u32 * block_closest_centers = new _u32[block_size * k_base];
+  size_t block_size = num_test <= BLOCK_SIZE ? num_test : BLOCK_SIZE;// why BLOCK_SIZE = max(num_test,5000000)?
+  _u32 * block_closest_centers = new _u32[block_size * k_base]; // assign to k_base-closest cluster
   float *block_data_float;
 
   size_t num_blocks = DIV_ROUND_UP(num_test, block_size);
-
+  
   for (size_t block = 0; block < num_blocks; block++) {
     size_t start_id = block * block_size;
     size_t end_id = (std::min)((block + 1) * block_size, num_test);
     size_t cur_blk_size = end_id - start_id;
-
+    // left is a vector, aligned vector data
+    // get offset
     block_data_float = test_data_float + start_id * test_dim;
 
     math_utils::compute_closest_centers(block_data_float, cur_blk_size,
                                         test_dim, pivots, num_centers, k_base,
                                         block_closest_centers);
-
+    // in each block, get k(2)_base_closest_centers for every points
+    // store in block_closest_centers
     for (size_t p = 0; p < cur_blk_size; p++) {
       for (size_t p1 = 0; p1 < k_base; p1++) {
+        // count how many points in each shard 
         size_t shard_id = block_closest_centers[p * k_base + p1];
         shard_counts[shard_id]++;
       }
@@ -941,23 +944,24 @@ int partition_with_ram_budget(const std::string data_file,
                               const std::string prefix_path, size_t k_base) {
   size_t train_dim;
   size_t num_train;
-  float *train_data_float;
+  float *train_data_float; // as the begin pointer for aligned data
   size_t max_k_means_reps = 10;
 
   int  num_parts = 3;
   bool fit_in_ram = false;
-
+  // sample, data saved in memory with train_data_float as beginning 
   gen_random_slice<T>(data_file, sampling_rate, train_data_float, num_train,
                       train_dim);
 
   size_t test_dim;
   size_t num_test;
   float *test_data_float;
+  // sample, data saved in memory with test_data_float as beginning 
   gen_random_slice<T>(data_file, sampling_rate, test_data_float, num_test,
                       test_dim);
 
   float *pivot_data = nullptr;
-
+  
   std::string cur_file = std::string(prefix_path);
   std::string output_file;
 
@@ -966,20 +970,21 @@ int partition_with_ram_budget(const std::string data_file,
   //  cur_file = cur_file + "_kmeans_partitioning-" + std::to_string(num_parts);
   output_file = cur_file + "_centroids.bin";
 
-  while (!fit_in_ram) {
+  while (!fit_in_ram) { // false at the first time
     fit_in_ram = true;
 
     double max_ram_usage = 0;
     if (pivot_data != nullptr)
       delete[] pivot_data;
-
+    // continuous algin of pivot data
     pivot_data = new float[num_parts * train_dim];
     // Process Global k-means for kmeans_partitioning Step
     diskann::cout << "Processing global k-means (kmeans_partitioning Step)"
                   << std::endl;
+    // get pivot data
     kmeans::kmeanspp_selecting_pivots(train_data_float, num_train, train_dim,
                                       pivot_data, num_parts);
-
+    // lloyds: a algorithm for k-means
     kmeans::run_lloyds(train_data_float, num_train, train_dim, pivot_data,
                        num_parts, max_k_means_reps, NULL, NULL);
 
@@ -987,9 +992,10 @@ int partition_with_ram_budget(const std::string data_file,
     // closest clusters.
 
     std::vector<size_t> cluster_sizes;
+    // k-means calculation, assign every point to k_base center, count points in each shard.
     estimate_cluster_sizes(test_data_float, num_test, pivot_data, num_parts,
                            train_dim, k_base, cluster_sizes);
-
+    // having cardinality, divided by p_val can get estimated number of points
     for (auto &p : cluster_sizes) {
       p = (_u64)(p /
                  sampling_rate);  // to account for the fact that p is the size

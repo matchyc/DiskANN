@@ -403,15 +403,17 @@ namespace diskann {
       std::remove(centroids_file.c_str());
       return 0;
     }
-    // else split build
+    // else build split
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
+    
+    // k-means, estimate memory footprint, get appropriate num_parts
     int         num_parts =
         partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget,
                                      2 * R / 3, merged_index_prefix, 2);
 
     std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
     std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
-
+    
     for (int p = 0; p < num_parts; p++) {
       std::string shard_base_file =
           merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";

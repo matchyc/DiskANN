@@ -153,7 +153,7 @@ namespace math_utils {
       pts_norms_squared = new float[num_points];
 
     size_t PAR_BLOCK_SIZE = num_points;
-    size_t N_BLOCKS = (num_points % PAR_BLOCK_SIZE) == 0
+    size_t N_BLOCKS = (num_points % PAR_BLOCK_SIZE) == 0 // round up
                           ? (num_points / PAR_BLOCK_SIZE)
                           : (num_points / PAR_BLOCK_SIZE) + 1;
 
@@ -333,7 +333,7 @@ namespace kmeans {
 
       residual = lloyds_iter(data, num_points, dim, centers, num_centers,
                              docs_l2sq, closest_docs, closest_center);
-
+  
       diskann::cout << "Lloyd's iter " << i
                     << "  dist_sq residual: " << residual << std::endl;
 

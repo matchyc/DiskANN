@@ -108,7 +108,7 @@ namespace diskann {
   struct SimpleNeighbors {
     std::vector<SimpleNeighbor> pool;
   };
-
+  // return the location after insertion
   static inline unsigned InsertIntoPool(Neighbor *addr, unsigned K,
                                         Neighbor nn) {
     // find the location to insert

@@ -474,6 +474,7 @@ namespace diskann {
     npts = (unsigned) npts_i32;
     dim = (unsigned) dim_i32;
 
+    //check file size
     size_t expected_actual_file_size =
         npts * dim * sizeof(T) + 2 * sizeof(uint32_t);
     if (actual_file_size != expected_actual_file_size) {
@@ -494,10 +495,10 @@ namespace diskann {
                   << std::flush;
     alloc_aligned(((void**) &data), allocSize, 8 * sizeof(T));
     diskann::cout << "done. Copying data..." << std::flush;
-
+    
     for (size_t i = 0; i < npts; i++) {
       reader.read((char*) (data + i * rounded_dim), dim * sizeof(T));
-      memset(data + i * rounded_dim + dim, 0, (rounded_dim - dim) * sizeof(T));
+      memset(data + i * rounded_dim + dim, 0, (rounded_dim - dim) * sizeof(T));// eliminate the holes
     }
     diskann::cout << " done." << std::endl;
   }
@@ -523,7 +524,7 @@ namespace diskann {
                                size_t& npts, size_t& dim, size_t& rounded_dim) {
     diskann::cout << "Reading bin file " << bin_file << " ..." << std::flush;
     // START OLS
-    //_u64            read_blk_size = 64 * 1024 * 1024;
+    // _u64            read_blk_size = 64 * 1024 * 1024;
     // cached_ifstream reader(bin_file, read_blk_size);
     // size_t actual_file_size = reader.get_file_size();
     // END OLS
