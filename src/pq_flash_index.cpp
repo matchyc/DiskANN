@@ -310,10 +310,10 @@ namespace diskann {
         AlignedRead read;
         char *      buf = nullptr;
         alloc_aligned((void **) &buf, SECTOR_LEN, SECTOR_LEN);
-        nhoods.push_back(std::make_pair(node_list[node_idx], buf));
+        nhoods.push_back(std::make_pair(node_list[node_idx], buf)); // nhoods holds (id, address) as element
         read.len = SECTOR_LEN;
         read.buf = buf;
-        read.offset = NODE_SECTOR_NO(node_list[node_idx]) * SECTOR_LEN;
+        read.offset = NODE_SECTOR_NO(node_list[node_idx]) * SECTOR_LEN; // sector offset
         read_reqs.push_back(read);
       }
 
@@ -321,13 +321,19 @@ namespace diskann {
 
       _u64 node_idx = start_idx;
       for (auto &nhood : nhoods) {
-        char *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
+        char *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);// (address, id)
         T *   node_coords = OFFSET_TO_NODE_COORDS(node_buf);
         T *   cached_coords = coord_cache_buf + node_idx * aligned_dim;
         memcpy(cached_coords, node_coords, disk_bytes_per_point);
         coord_cache.insert(std::make_pair(nhood.first, cached_coords));
-
+        //stored in coord_cache
         // insert node nhood into nhood_cache
+
+        // index layout: 
+        // |------------ ------------------------------------ ------------------------|
+        // | coordinate | number of neighbors (4bytes) nnbrs | nnbrs * 4 bytes (ids)  |
+        // |------------ ------------------------------------ ------------------------|
+        //                            max_node_len
         unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
         auto      nnbrs = *node_nhood;
         unsigned *nbrs = node_nhood + 1;
@@ -357,7 +363,7 @@ namespace diskann {
   void PQFlashIndex<T>::generate_cache_list_from_sample_queries(
       std::string sample_bin, _u64 l_search, _u64 beamwidth,
       _u64 num_nodes_to_cache, uint32_t nthreads,
-      std::vector<uint32_t> &node_list) {
+      std::vector<uint32_t> &node_list) { // l_search = 15, beamwidth = 6
 #endif
     this->count_visited_nodes = true;
     this->node_visit_counter.clear();
@@ -938,6 +944,7 @@ namespace diskann {
     unsigned k = 0;
 
     // cleared every iteration
+    // frontier holds the nodes ara not be cached
     std::vector<unsigned>                    frontier;
     std::vector<std::pair<unsigned, char *>> frontier_nhoods;
     std::vector<AlignedRead>                 frontier_read_reqs;
@@ -958,25 +965,26 @@ namespace diskann {
       // WAS: _u64 marker = k - 1;
       _u32 marker = k;
       _u32 num_seen = 0;
-
+      // beamSearch for PQ
+      // search around entry point
       while (marker < cur_list_size && frontier.size() < beam_width &&
              num_seen < beam_width + 2) {
         if (retset[marker].flag) {
           num_seen++;
           auto iter = nhood_cache.find(retset[marker].id);
-          if (iter != nhood_cache.end()) {
+          if (iter != nhood_cache.end()) { // nhood_cache hit, add to cached_nhoods
             cached_nhoods.push_back(
                 std::make_pair(retset[marker].id, iter->second));
             if (stats != nullptr) {
               stats->n_cache_hits++;
             }
-          } else {
+          } else { // else add to frontier
             frontier.push_back(retset[marker].id);
           }
           retset[marker].flag = false;
           if (this->count_visited_nodes) {
             reinterpret_cast<std::atomic<_u32> &>(
-                this->node_visit_counter[retset[marker].id].second)
+                this->node_visit_counter[retset[marker].id].second) // hit count ++
                 .fetch_add(1);
           }
         }

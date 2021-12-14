@@ -151,7 +151,7 @@ namespace diskann {
     _u64 disk_bytes_per_point = 0;
 
     std::string                        disk_index_file;
-    std::vector<std::pair<_u32, _u32>> node_visit_counter;
+    std::vector<std::pair<_u32, _u32>> node_visit_counter; // (id, count)
 
     // PQ data
     // n_chunks = # of chunks ndims is split into

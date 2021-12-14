@@ -270,7 +270,7 @@ namespace diskann {
         }
       }
     }
-    out.write((char *) &index_size, sizeof(uint64_t));
+    out.write((char *) &index_size, sizeof(uint64_t)); 
     out.write((char *) &_width, sizeof(unsigned));
     out.write((char *) &_ep, sizeof(unsigned));
     for (unsigned i = 0; i < _nd + _num_frozen_pts; i++) {
@@ -459,8 +459,8 @@ namespace diskann {
       if (best_L_nodes[k].flag) {
         best_L_nodes[k].flag = false;
         auto n = best_L_nodes[k].id;
-        expanded_nodes_info.emplace_back(best_L_nodes[k]);
-        expanded_nodes_ids.insert(n);
+        expanded_nodes_info.emplace_back(best_L_nodes[k]); // once a node occurred in best_L_nodes
+        expanded_nodes_ids.insert(n);                      // add to pool & visited
         // for every node in best_L_nodes, check it's neighbors
         for (unsigned m = 0; m < _final_graph[n].size(); ++m) {
           unsigned id = _final_graph[n][m];
@@ -855,10 +855,12 @@ namespace diskann {
           // get nearest neighbors of n in tmp. pool contains all the
           // points that were checked along with their distance from
           // n. visited contains all the points visited, just the ids
+          // pool: info
+          // visited: ids
           std::vector<Neighbor> pool;
           pool.reserve(L * 2);
           visited.reserve(L * 2);
-          // mark: here 2021-12-13 21:15 chenmeng
+
           get_expanded_nodes(node, L, init_ids, pool, visited);
           /* check the neighbors of the query that are not part of
            * visited, check their distance to the query, and add it to
@@ -893,7 +895,7 @@ namespace diskann {
             _final_graph[node].emplace_back(id);
         }
         s = std::chrono::high_resolution_clock::now();
-
+// replace neighbors for each node in graph as pruned neighbors
 #pragma omp parallel for schedule(dynamic, 64)
         for (_s64 node_ctr = start_id; node_ctr < (_s64) end_id; ++node_ctr) {
           auto                   node = visit_order[node_ctr];
@@ -904,7 +906,7 @@ namespace diskann {
           pruned_list.clear();
           pruned_list.shrink_to_fit();
         }
-
+// out-degree out of degree bound, pruned again
 #pragma omp parallel for schedule(dynamic, 65536)
         for (_s64 node_ctr = 0; node_ctr < (_s64)(visit_order.size());
              node_ctr++) {
@@ -954,7 +956,7 @@ namespace diskann {
           inter_count = 0;
           progress_counter += 5;
         }
-      }
+      }// end round
 // Gopal. Splittng diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
 #ifdef DISKANN_BUILD
@@ -966,9 +968,11 @@ namespace diskann {
       diskann::cout << "search+prune_time=" << total_sync_time
                     << "s, inter_time=" << total_inter_time
                     << "s, inter_count=" << total_inter_count << std::endl;
-    }
+    }//end two round alpha = 1 & 1.2...
 
     diskann::cout << "Starting final cleanup.." << std::flush;
+
+// check degree bound again
 #pragma omp parallel for schedule(dynamic, 65536)
     for (_s64 node_ctr = 0; node_ctr < (_s64)(visit_order.size()); node_ctr++) {
       auto node = visit_order[node_ctr];
