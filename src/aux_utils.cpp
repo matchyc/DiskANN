@@ -284,7 +284,9 @@ namespace diskann {
     _u32          one_val = 1;
     medoid_writer.write((char *) &nshards_u32, sizeof(uint32_t));
     medoid_writer.write((char *) &one_val, sizeof(uint32_t));
-
+    // num_parts, 1
+    // medoid
+    // medoid ...
     for (_u64 shard = 0; shard < nshards; shard++) {
       unsigned medoid;
       // read medoid

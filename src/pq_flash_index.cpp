@@ -204,7 +204,7 @@ namespace diskann {
       // delete reader; //not deleting reader because it is now passed by ref.
     }
   }
-
+  // allocate memory space for each thread
   template<typename T>
   void PQFlashIndex<T>::setup_thread_data(_u64 nthreads) {
     diskann::cout << "Setting up thread-specific contexts for nthreads: "
@@ -311,19 +311,19 @@ namespace diskann {
         char *      buf = nullptr;
         alloc_aligned((void **) &buf, SECTOR_LEN, SECTOR_LEN);
         nhoods.push_back(std::make_pair(node_list[node_idx], buf)); // nhoods holds (id, address) as element
-        read.len = SECTOR_LEN;
+        read.len = SECTOR_LEN; //4k
         read.buf = buf;
         read.offset = NODE_SECTOR_NO(node_list[node_idx]) * SECTOR_LEN; // sector offset
         read_reqs.push_back(read);
       }
-
+      //nhoods element: (id, buf address)
       reader->read(read_reqs, ctx);
 
       _u64 node_idx = start_idx;
       for (auto &nhood : nhoods) {
-        char *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);// (address, id)
-        T *   node_coords = OFFSET_TO_NODE_COORDS(node_buf);
-        T *   cached_coords = coord_cache_buf + node_idx * aligned_dim;
+        char *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);// coords offset in current sector
+        T *   node_coords = OFFSET_TO_NODE_COORDS(node_buf); // static cast
+        T *   cached_coords = coord_cache_buf + node_idx * aligned_dim; // offset of this node's coords in total cached coords
         memcpy(cached_coords, node_coords, disk_bytes_per_point);
         coord_cache.insert(std::make_pair(nhood.first, cached_coords));
         //stored in coord_cache
@@ -334,13 +334,13 @@ namespace diskann {
         // | coordinate | number of neighbors (4bytes) nnbrs | nnbrs * 4 bytes (ids)  |
         // |------------ ------------------------------------ ------------------------|
         //                            max_node_len
-        unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
+        unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf); // offset after coords
         auto      nnbrs = *node_nhood;
         unsigned *nbrs = node_nhood + 1;
         // diskann::cout << "CACHE: nnbrs = " << nnbrs << "\n";
         std::pair<_u32, unsigned *> cnhood;
         cnhood.first = nnbrs;
-        cnhood.second = nhood_cache_buf + node_idx * (max_degree + 1);
+        cnhood.second = nhood_cache_buf + node_idx * (max_degree + 1); // offset in toal nhood_cache_buf
         memcpy(cnhood.second, nbrs, nnbrs * sizeof(unsigned));
         nhood_cache.insert(std::make_pair(nhood.first, cnhood));
         aligned_free(nhood.second);
@@ -763,14 +763,14 @@ namespace diskann {
 #ifdef EXEC_ENV_OLS
       if (!files.fileExists(centroids_file)) {
 #else
-      if (!file_exists(centroids_file)) {
+      if (!file_exists(centroids_file)) { // does not exist centroids_file
 #endif
         diskann::cout
             << "Centroid data file not found. Using corresponding vectors "
                "for the medoids "
             << std::endl;
         use_medoids_data_as_centroids();
-      } else {
+      } else { // exist
         size_t num_centroids, aligned_tmp_dim;
 #ifdef EXEC_ENV_OLS
         diskann::load_aligned_bin<float>(files, centroids_file, centroid_data,
@@ -792,7 +792,7 @@ namespace diskann {
                                       __LINE__);
         }
       }
-    } else {
+    } else { // does not exist medoids_file
       num_medoids = 1;
       medoids = new uint32_t[1];
       medoids[0] = (_u32)(medoid_id_on_file);
@@ -838,6 +838,7 @@ namespace diskann {
                                            float *     distances,
                                            const _u64  beam_width,
                                            QueryStats *stats) {
+    // get data address structure for a thread, because it's a parallelized procedure
     ThreadData<T> data = this->thread_data.pop();
     while (data.scratch.sector_scratch == nullptr) {
       this->thread_data.wait_for_push_notify();
@@ -851,8 +852,9 @@ namespace diskann {
     float        query_norm = 0;
     const T *    query = data.scratch.aligned_query_T;
     const float *query_float = data.scratch.aligned_query_float;
-
+    // assign address for current thread
     for (uint32_t i = 0; i < this->data_dim; i++) {
+      // copy to 'data' structure element by element
       data.scratch.aligned_query_float[i] = query1[i];
       data.scratch.aligned_query_T[i] = query1[i];
       query_norm += query1[i] * query1[i];
@@ -876,14 +878,16 @@ namespace diskann {
     // reset query
     query_scratch->reset();
 
+    // scratch space of memory address for current thread
     // scratch space to compute distances between FP32 Query and INT8 data
+    // but now it's 0 in memory???
     float *scratch = query_scratch->aligned_scratch;
     _mm_prefetch((char *) scratch, _MM_HINT_T0);
 
     // pointers to buffers for data
     T *   data_buf = query_scratch->coord_scratch;
     _u64 &data_buf_idx = query_scratch->coord_idx;
-    _mm_prefetch((char *) data_buf, _MM_HINT_T1);
+    _mm_prefetch((char *) data_buf, _MM_HINT_T1); // prefetch 64 bytes(cache line)
 
     // sector scratch
     char *sector_scratch = query_scratch->sector_scratch;
@@ -907,7 +911,7 @@ namespace diskann {
                        dists_out);
     };
     Timer                 query_timer, io_timer, cpu_timer;
-    std::vector<Neighbor> retset(l_search + 1);
+    std::vector<Neighbor> retset(l_search + 1); // result set
     tsl::robin_set<_u64>  visited(4096);
 
     std::vector<Neighbor> full_retset;
@@ -917,6 +921,8 @@ namespace diskann {
     _u32                        best_medoid = 0;
     float                       best_dist = (std::numeric_limits<float>::max)();
     std::vector<SimpleNeighbor> medoid_dists;
+
+    // find best medoid
     for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
       float cur_expanded_dist = dist_cmp_float->compare(
           query_float, centroid_data + aligned_dim * cur_m,
@@ -971,9 +977,9 @@ namespace diskann {
              num_seen < beam_width + 2) {
         if (retset[marker].flag) {
           num_seen++;
-          auto iter = nhood_cache.find(retset[marker].id);
+          auto iter = nhood_cache.find(retset[marker].id); // nhood_cache holds: (cached_node_id, (nnbrs, nnbrs_address)) for each element
           if (iter != nhood_cache.end()) { // nhood_cache hit, add to cached_nhoods
-            cached_nhoods.push_back(
+            cached_nhoods.push_back( // cached_nhoods holds: (id, (nnbrs, nnbrs_address))
                 std::make_pair(retset[marker].id, iter->second));
             if (stats != nullptr) {
               stats->n_cache_hits++;
@@ -1002,7 +1008,7 @@ namespace diskann {
           fnhood.second = sector_scratch + sector_scratch_idx * SECTOR_LEN;
           sector_scratch_idx++;
           frontier_nhoods.push_back(fnhood);
-          frontier_read_reqs.emplace_back(
+          frontier_read_reqs.emplace_back( // read disk
               NODE_SECTOR_NO(((size_t) id)) * SECTOR_LEN, SECTOR_LEN,
               fnhood.second);
           if (stats != nullptr) {
@@ -1024,8 +1030,8 @@ namespace diskann {
 
       // process cached nhoods
       for (auto &cached_nhood : cached_nhoods) {
-        auto  global_cache_iter = coord_cache.find(cached_nhood.first);
-        T *   node_fp_coords_copy = global_cache_iter->second;
+        auto  global_cache_iter = coord_cache.find(cached_nhood.first); // find the iter
+        T *   node_fp_coords_copy = global_cache_iter->second; // coord buf address
         float cur_expanded_dist;
         if (!use_disk_index_pq) {
           cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy,
@@ -1055,19 +1061,19 @@ namespace diskann {
         // process prefetched nhood
         for (_u64 m = 0; m < nnbrs; ++m) {
           unsigned id = node_nbrs[m];
-          if (visited.find(id) != visited.end()) {
+          if (visited.find(id) != visited.end()) { // visited
             continue;
           } else {
             visited.insert(id);
             cmps++;
-            float dist = dist_scratch[m];
+            float dist = dist_scratch[m]; // pq dist
             // diskann::cout << "cmp: " << id << ", dist: " << dist <<
             // std::endl; std::cerr << "dist: " << dist << std::endl;
             if (dist >= retset[cur_list_size - 1].distance &&
-                (cur_list_size == l_search))
-              continue;
-            Neighbor nn(id, dist, true);
-            auto     r = InsertIntoPool(
+                (cur_list_size == l_search)) // pq dist > current longest distance, continue
+              continue;                 
+            Neighbor nn(id, dist, true);  // else
+            auto     r = InsertIntoPool( // binary search
                 retset.data(), cur_list_size,
                 nn);  // Return position in sorted list where nn inserted.
             if (cur_list_size < l_search)
@@ -1094,7 +1100,7 @@ namespace diskann {
         auto &frontier_nhood = frontier_nhoods[completedIndex];
         (*ctx.m_pRequestsStatus)[completedIndex] = IOContext::PROCESS_COMPLETE;
 #else
-      for (auto &frontier_nhood : frontier_nhoods) {
+      for (auto &frontier_nhood : frontier_nhoods) { // process frontiers with precise data 
 #endif
         char *node_disk_buf =
             OFFSET_TO_NODE(frontier_nhood.second, frontier_nhood.first);
