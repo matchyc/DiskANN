@@ -903,7 +903,7 @@ namespace diskann {
     Timer                 query_timer, io_timer, cpu_timer;
     std::vector<Neighbor> retset(l_search + 1);
     tsl::robin_set<_u64>  visited(4096);
-
+    
     std::vector<Neighbor> full_retset;
     full_retset.reserve(4096);
     tsl::robin_map<_u64, T *> fp_coords;
@@ -943,7 +943,8 @@ namespace diskann {
     std::vector<AlignedRead>                 frontier_read_reqs;
     std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
         cached_nhoods;
-
+    bool fflag = true;
+    uint32_t col_l_search = l_search;
     while (k < cur_list_size) {
       auto nk = cur_list_size;
 
@@ -962,6 +963,21 @@ namespace diskann {
       while (marker < cur_list_size && frontier.size() < beam_width &&
              num_seen < beam_width + 2) {
         if (retset[marker].flag) {
+          
+          // if (marker > (uint32_t)(col_l_search / 2) && fflag) {
+          //   marker += 5;
+          //   // std::cout << "triger marker jump \n before: " << marker ;  
+          //   // std::copy(retset.begin() + retset.size() - 5, retset.end(), retset.begin());
+          //   // retset.erase(retset.begin() + 5, retset.end());
+          //   // col_l_search = 20;
+          //   // cur_list_size = 5;
+          //   // marker = 0;
+          //   // // marker = marker * 1.5 > retset.size() ? retset.size() - 1 : marker * 1.5;
+          //   // // retset[marker].flag = false; 
+          //   // // std::cout << "after: " << marker << '\n';
+          //   // fflag = false;
+          // }
+
           num_seen++;
           auto iter = nhood_cache.find(retset[marker].id);
           if (iter != nhood_cache.end()) {
@@ -981,8 +997,9 @@ namespace diskann {
           }
         }
         marker++;
+        // marker+=10;
       }
-
+      
       // read nhoods of frontier ids
       if (!frontier.empty()) {
         if (stats != nullptr)
@@ -1014,63 +1031,6 @@ namespace diskann {
         }
       }
 
-      // process cached nhoods
-      for (auto &cached_nhood : cached_nhoods) {
-        auto  global_cache_iter = coord_cache.find(cached_nhood.first);
-        T *   node_fp_coords_copy = global_cache_iter->second;
-        float cur_expanded_dist;
-        if (!use_disk_index_pq) {
-          cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy,
-                                                (unsigned) aligned_dim);
-        } else {
-          if (metric == diskann::Metric::INNER_PRODUCT)
-            cur_expanded_dist = disk_pq_table.inner_product(
-                query_float, (_u8 *) node_fp_coords_copy);
-          else
-            cur_expanded_dist = disk_pq_table.l2_distance(
-                query_float, (_u8 *) node_fp_coords_copy);
-        }
-        full_retset.push_back(
-            Neighbor((unsigned) cached_nhood.first, cur_expanded_dist, true));
-
-        _u64      nnbrs = cached_nhood.second.first;
-        unsigned *node_nbrs = cached_nhood.second.second;
-
-        // compute node_nbrs <-> query dists in PQ space
-        cpu_timer.reset();
-        compute_dists(node_nbrs, nnbrs, dist_scratch);
-        if (stats != nullptr) {
-          stats->n_cmps += nnbrs;
-          stats->cpu_us += cpu_timer.elapsed();
-        }
-
-        // process prefetched nhood
-        for (_u64 m = 0; m < nnbrs; ++m) {
-          unsigned id = node_nbrs[m];
-          if (visited.find(id) != visited.end()) {
-            continue;
-          } else {
-            visited.insert(id);
-            cmps++;
-            float dist = dist_scratch[m];
-            // diskann::cout << "cmp: " << id << ", dist: " << dist <<
-            // std::endl; std::cerr << "dist: " << dist << std::endl;
-            if (dist >= retset[cur_list_size - 1].distance &&
-                (cur_list_size == l_search))
-              continue;
-            Neighbor nn(id, dist, true);
-            auto     r = InsertIntoPool(
-                retset.data(), cur_list_size,
-                nn);  // Return position in sorted list where nn inserted.
-            if (cur_list_size < l_search)
-              ++cur_list_size;
-            if (r < nk)
-              nk = r;  // nk logs the best position in the retset that was
-            // updated
-            // due to neighbors of n.
-          }
-        }
-      }
 #ifdef USE_BING_INFRA
       // process each frontier nhood - compute distances to unvisited nodes
       int completedIndex = -1;
@@ -1142,16 +1102,24 @@ namespace diskann {
               stats->n_cmps++;
             }
             if (dist >= retset[cur_list_size - 1].distance &&
-                (cur_list_size == l_search))
+                (cur_list_size == col_l_search))
               continue;
             Neighbor nn(id, dist, true);
             auto     r = InsertIntoPool(
                 retset.data(), cur_list_size,
                 nn);  // Return position in sorted list where nn inserted.
-            if (cur_list_size < l_search)
+            if (cur_list_size < col_l_search)
               ++cur_list_size;
-            if (r < nk)
-              nk = r;  // nk logs the best position in the retset that was
+
+            if (r < nk) {
+              nk = r;
+            }
+
+            // if (r < nk || r < marker) {
+            //   marker = r;
+            //   nk = r;  
+            // }
+                       // nk logs the best position in the retset that was
                        // updated
                        // due to neighbors of n.
           }

@@ -149,10 +149,10 @@ int search_disk_index(int argc, char** argv) {
   std::vector<uint32_t> node_list;
   diskann::cout << "Caching " << num_nodes_to_cache
                 << " BFS nodes around medoid(s)" << std::endl;
-  //_pFlashIndex->cache_bfs_levels(num_nodes_to_cache, node_list);
-  _pFlashIndex->generate_cache_list_from_sample_queries(
-       warmup_query_file, 15, 6, num_nodes_to_cache, num_threads, node_list);
-  _pFlashIndex->load_cache_list(node_list);
+  // _pFlashIndex->cache_bfs_levels(num_nodes_to_cache, node_list);
+  // _pFlashIndex->generate_cache_list_from_sample_queries(
+  //      warmup_query_file, 15, 6, num_nodes_to_cache, num_threads, node_list);
+  // _pFlashIndex->load_cache_list(node_list);
   node_list.clear();
   node_list.shrink_to_fit();
 
@@ -194,6 +194,7 @@ int search_disk_index(int argc, char** argv) {
                                        warmup_result_ids_64.data() + (i * 1),
                                        warmup_result_dists.data() + (i * 1), 4);
     }
+    
     diskann::cout << "..done" << std::endl;
   }
 
@@ -218,7 +219,7 @@ int search_disk_index(int argc, char** argv) {
   std::vector<std::vector<float>>    query_result_dists(Lvec.size());
 
   uint32_t optimized_beamwidth = 2;
-
+  // std::ofstream res_ofs("/home/cm/projects/ann/exp_result/sub_hnsw_cmp/diskann.csv", std::ios::out);
   for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++) {
     _u64 L = Lvec[test_id];
 
@@ -269,6 +270,17 @@ int search_disk_index(int argc, char** argv) {
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.cpu_us; });
 
+    float mean_cmps = diskann::get_mean_stats(
+      stats, query_num,
+      [](const diskann::QueryStats& stats) { return stats.n_cmps; });
+
+    float mean_cache_hit = diskann::get_mean_stats(
+      stats, query_num,
+      [](const diskann::QueryStats& stats) { return stats.n_cache_hits; });
+
+    float mean_io_us = diskann::get_mean_stats(
+      stats, query_num,
+      [](const diskann::QueryStats& stats) { return stats.io_us; });
     float recall = 0;
     if (calc_recall_flag) {
       recall = diskann::calculate_recall(query_num, gt_ids, gt_dists, gt_dim,
@@ -284,6 +296,17 @@ int search_disk_index(int argc, char** argv) {
       diskann::cout << std::setw(16) << recall << std::endl;
     } else
       diskann::cout << std::endl;
+
+    uint32_t visited_nodes = 0;
+    // for (auto it = _pFlashIndex->node_visit_counter.begin(); it != _pFlashIndex->node_visit_counter.end();
+    //       ++it) {
+    //         visited_nodes += it->second;
+    //       }
+    // std::cout << "Mean visited nodes: " << visited_nodes / query_num << std::endl;
+    diskann::cout << "Mean cmps: " << mean_cmps << std::endl;
+    diskann::cout << "Mean_cache_hit: " << mean_cache_hit << std::endl;
+    diskann::cout << "mean_io_us: " << mean_io_us << std::endl;
+    // res_ofs << recall << "," << mean_latency << std::endl;
   }
 
   diskann::cout << "Done searching. Now saving results " << std::endl;

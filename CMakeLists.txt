@@ -8,6 +8,7 @@ else()
 endif()
 set(CMAKE_STANDARD 14)
 
+set(CMAKE_BUILD_TYPE "Release")
 
 #set(CMAKE_USER_MAKE_RULES_OVERRIDE "${CMAKE_CURRENT_LIST_DIR}/CompilerOptions.cmake")
 if(MSVC)

@@ -125,6 +125,7 @@ namespace diskann {
                                      QueryStats *        stats);
 
     std::shared_ptr<AlignedFileReader> &reader;
+    std::vector<std::pair<_u32, _u32>> node_visit_counter;
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
     DISKANN_DLLEXPORT void setup_thread_data(_u64 nthreads);
@@ -151,7 +152,7 @@ namespace diskann {
     _u64 disk_bytes_per_point = 0;
 
     std::string                        disk_index_file;
-    std::vector<std::pair<_u32, _u32>> node_visit_counter;
+
 
     // PQ data
     // n_chunks = # of chunks ndims is split into
