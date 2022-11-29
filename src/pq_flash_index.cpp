@@ -12,6 +12,7 @@
 #include <cmath>
 #include <iterator>
 #include <thread>
+#include <numeric>
 #include "distance.h"
 #include "exceptions.h"
 #include "parameters.h"
@@ -945,6 +946,18 @@ namespace diskann {
         cached_nhoods;
     bool fflag = true;
     uint32_t col_l_search = l_search;
+    uint32_t pre_update_hop = 0;
+    bool record_hop_flag = true;
+    uint32_t pre_k = 0;
+    uint32_t update_count = 0;
+    // hop_vec_ofs << l_search << ",";
+    // tsl::robin_set<uint32_t> test_set = {};
+    // {388255, 1042356, 1655347, 1957504, 2890372, 3684892, 4605005,
+    //    4838163, 4983995, 5245411, 5871785, 7259560, 8095751,
+    //    8224480, 8393917, 8933715, 9265545, 9332839};
+    // auto my_accum = [=](Neighbor& a, Neighbor& b) -> uint32_t {
+    //   return a.id + b.id;
+    // };
     while (k < cur_list_size) {
       auto nk = cur_list_size;
 
@@ -988,6 +1001,10 @@ namespace diskann {
             }
           } else {
             frontier.push_back(retset[marker].id);
+            // if (test_set.find(retset[marker].id) != test_set.end()) {
+            //   col_l_search = 10;
+            // }
+            // hop_vec_ofs << retset[marker].id << ",";
           }
           retset[marker].flag = false;
           if (this->count_visited_nodes) {
@@ -1137,15 +1154,57 @@ namespace diskann {
         k = nk;  // k is the best position in retset updated in this round.
       else
         ++k;
+      
+      if (record_hop_flag && hops == 5) {
+        pre_update_hop = hops;
+        pre_k = 0;
+        for(auto it = full_retset.begin(); it != full_retset.begin() + k_search; ++it) {
+          pre_k += it->id;
+        }
+        // pre_k = std::accumulate(full_retset.begin(), full_retset.begin() + k_search, Neighbor{0,0,0}, my_accum);
+        // pre_k = k;
+        record_hop_flag = false;
+      }
 
       hops++;
-    }
 
+      if (!record_hop_flag) {
+        // if (k < pre_k) {
+        //   pre_update_hop = hops;
+        //   pre_k = k;
+        // } else if (pre_update_hop + 8 == hops){
+        //   // std::cout << "break! k: " << k << std::endl;
+        //   k = cur_list_size; // break while
+        // }
+        if (pre_update_hop + 6 == hops) {
+          uint32_t temp_k = 0;
+          for(auto it = full_retset.begin(); it != full_retset.begin() + k_search; ++it) {
+            temp_k += it->id;
+          }
+
+          if (pre_k != temp_k) {
+            pre_update_hop = hops;
+            pre_k = temp_k;
+          } else {
+            // if (update_count < 3) {
+            //   k = cur_list_size;
+            // }
+          }
+          update_count ++;
+        }
+      }
+    
+      std::sort(full_retset.begin(), full_retset.end(),
+                [](const Neighbor &left, const Neighbor &right) {
+                  return left.distance < right.distance;
+                });
+    }
+    // hop_vec_ofs << '\n';
     // re-sort by distance
-    std::sort(full_retset.begin(), full_retset.end(),
-              [](const Neighbor &left, const Neighbor &right) {
-                return left.distance < right.distance;
-              });
+    // std::sort(full_retset.begin(), full_retset.end(),
+    //           [](const Neighbor &left, const Neighbor &right) {
+    //             return left.distance < right.distance;
+    //           });
 
     /*
         std::cout<<"return set: \n";

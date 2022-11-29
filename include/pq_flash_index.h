@@ -126,6 +126,7 @@ namespace diskann {
 
     std::shared_ptr<AlignedFileReader> &reader;
     std::vector<std::pair<_u32, _u32>> node_visit_counter;
+    std::ofstream hop_vec_ofs;
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
     DISKANN_DLLEXPORT void setup_thread_data(_u64 nthreads);

@@ -124,6 +124,24 @@ int search_disk_index(int argc, char** argv) {
     }
     calc_recall_flag = true;
   }
+  
+  std::string custom_l_file = "/home/cm/projects/ann/exp_result/check_L_needed/test_deep10M_y.bin";
+  // std::string custom_l_file = "/home/cm/projects/ann/exp_result/check_L_needed/deep10M_test_y_by_dist_max.bin";
+  std::string custom_l_id_file = "/home/cm/projects/ann/exp_result/check_L_needed/test_deep10M_x_id.bin";
+  std::ifstream cus_l_ifs(custom_l_file, std::ios::in | std::ios::binary);
+  std::ifstream cus_lid_ifs(custom_l_id_file, std::ios::in | std::ios::binary);
+  std::vector<uint32_t> custom_l;
+  custom_l.resize(query_num);
+  for (size_t i = 0; i < query_num; ++i) {
+    int id = 0;
+    cus_lid_ifs.read((char *)&id, sizeof(uint32_t));
+    cus_l_ifs.read((char *)(custom_l.data() + id), sizeof(uint32_t));
+    if (i > 3500) {
+      custom_l[id] = Lvec.front();
+    }
+    // std::cout << "read custom L: " << custom_l[id] << '\n';
+  }
+  cus_l_ifs.close();
 
   std::shared_ptr<AlignedFileReader> reader = nullptr;
 #ifdef _WINDOWS
@@ -141,6 +159,8 @@ int search_disk_index(int argc, char** argv) {
 
   int res = _pFlashIndex->load(num_threads, pq_prefix.c_str(),
                                disk_index_file.c_str());
+
+  // _pFlashIndex->hop_vec_ofs.open("/home/cm/projects/ann/exp_result/check_L_needed/query_best_visited.log", std::ios::out | std::ios::trunc);
 
   if (res != 0) {
     return res;
@@ -242,6 +262,7 @@ int search_disk_index(int argc, char** argv) {
     for (_s64 i = 0; i < (int64_t) query_num; i++) {
       _pFlashIndex->cached_beam_search(
           query + (i * query_aligned_dim), recall_at, L,
+          // query + (i * query_aligned_dim), recall_at, custom_l[i],
           query_result_ids_64.data() + (i * recall_at),
           query_result_dists[test_id].data() + (i * recall_at),
           optimized_beamwidth, stats + i);
@@ -308,6 +329,8 @@ int search_disk_index(int argc, char** argv) {
     diskann::cout << "mean_io_us: " << mean_io_us << std::endl;
     // res_ofs << recall << "," << mean_latency << std::endl;
   }
+
+  _pFlashIndex->hop_vec_ofs.close();
 
   diskann::cout << "Done searching. Now saving results " << std::endl;
   _u64 test_id = 0;
