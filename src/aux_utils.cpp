@@ -373,7 +373,9 @@ namespace diskann {
                                 unsigned R, double sampling_rate,
                                 double ram_budget, std::string mem_index_path,
                                 std::string medoids_file,
-                                std::string centroids_file) {
+                                std::string centroids_file,
+                                std::string known_cluster_center_path
+                                ) {
     size_t base_num, base_dim;
     diskann::get_bin_metadata(base_file, base_num, base_dim);
 
@@ -393,7 +395,7 @@ namespace diskann {
       paras.Set<unsigned>("num_rnds", 2);
       paras.Set<bool>("saturate_graph", 1);
       paras.Set<std::string>("save_path", mem_index_path);
-
+      paras.Set<std::string>("known_cluster_center_path", known_cluster_center_path);
       std::unique_ptr<diskann::Index<T>> _pvamanaIndex =
           std::unique_ptr<diskann::Index<T>>(
               new diskann::Index<T>(compareMetric, base_file.c_str()));
@@ -649,10 +651,13 @@ namespace diskann {
     parser << std::string(indexBuildParameters);
     std::string              cur_param;
     std::vector<std::string> param_list;
-    while (parser >> cur_param)
+    while (parser >> cur_param) {
+      diskann::cout << "cur_param: " << cur_param << '\n';
       param_list.push_back(cur_param); // incoming parameters
+    }
+
     // check parameters
-    if (param_list.size() != 5 && param_list.size() != 6) {
+    if (param_list.size() != 5 && param_list.size() != 6 && param_list.size() != 7) {
       diskann::cout
           << "Correct usage of parameters is R (max degree) "
              "L (indexing list size, better if >= R) B (RAM limit of final "
@@ -681,7 +686,7 @@ namespace diskann {
     // if there is a 6th parameter, it means we compress the disk index vectors
     // also using PQ data (for very large dimensionality data). If the provided
     // parameter is 0, it means we store full vectors.
-    if (param_list.size() == 6) {
+    if (param_list.size() == 6 || param_list.size() == 7) {
       disk_pq_dims = atoi(param_list[5].c_str());
       use_disk_pq = true;
       if (disk_pq_dims == 0)
@@ -823,9 +828,10 @@ namespace diskann {
     train_data = nullptr;
     MallocExtension::instance()->ReleaseFreeMemory();
 
+    std::string known_centers_path = std::string(param_list[6].c_str());
     diskann::build_merged_vamana_index<T>(
         data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
-        indexing_ram_budget, mem_index_path, medoids_path, centroids_path);
+        indexing_ram_budget, mem_index_path, medoids_path, centroids_path, known_centers_path);
 
     if (!use_disk_pq) {
       diskann::create_disk_layout<T>(data_file_to_use.c_str(), mem_index_path,
@@ -912,15 +918,15 @@ namespace diskann {
       std::string base_file, diskann::Metric compareMetric, unsigned L,
       unsigned R, double sampling_rate, double ram_budget,
       std::string mem_index_path, std::string medoids_path,
-      std::string centroids_file);
+      std::string centroids_file, std::string known_cluster_center_path);
   template DISKANN_DLLEXPORT int build_merged_vamana_index<float>(
       std::string base_file, diskann::Metric compareMetric, unsigned L,
       unsigned R, double sampling_rate, double ram_budget,
       std::string mem_index_path, std::string medoids_path,
-      std::string centroids_file);
+      std::string centroids_file, std::string known_cluster_center_path);
   template DISKANN_DLLEXPORT int build_merged_vamana_index<uint8_t>(
       std::string base_file, diskann::Metric compareMetric, unsigned L,
       unsigned R, double sampling_rate, double ram_budget,
       std::string mem_index_path, std::string medoids_path,
-      std::string centroids_file);
+      std::string centroids_file, std::string known_cluster_center_path);
 };  // namespace diskann

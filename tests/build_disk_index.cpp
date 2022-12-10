@@ -17,7 +17,7 @@ bool build_index(const char* dataFilePath, const char* indexFilePath,
 }
 
 int main(int argc, char** argv) {
-  if (argc != 11) {
+  if (argc != 12) {
     std::cout << "Usage: " << argv[0]
               << "  [data_type<float/int8/uint8>]  [dist_fn: l2/mips] "
                  "[data_file.bin]  "
@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
     std::string params = std::string(argv[5]) + " " + std::string(argv[6]) +
                          " " + std::string(argv[7]) + " " +
                          std::string(argv[8]) + " " + std::string(argv[9]) +
-                         " " + std::string(argv[10]);
+                         " " + std::string(argv[10]) + " " + std::string(argv[11]);
     if (std::string(argv[1]) == std::string("float"))
       build_index<float>(argv[3], argv[4], params.c_str(), metric);
     else if (std::string(argv[1]) == std::string("int8"))

@@ -103,6 +103,11 @@ namespace diskann {
     DISKANN_DLLEXPORT void search_with_opt_graph(const T *query, size_t K,
                                                  size_t L, unsigned *indices);
 
+    std::string eps_id_path_ = "index_disk.entry_points_ids.bin";
+    std::string eps_coord_path_ = "index_disk.entry_points.bin";
+    std::ofstream build_writer_;
+    std::ifstream eps_reader_;
+    std::mutex lock_;
     /*  Internals of the library */
    protected:
     typedef std::vector<SimpleNeighbor>        vecNgh;

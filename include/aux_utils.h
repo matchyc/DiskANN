@@ -78,7 +78,7 @@ DISKANN_DLLEXPORT double calculate_range_search_recall(unsigned num_queries, std
       std::string base_file, diskann::Metric _compareMetric, unsigned L,
       unsigned R, double sampling_rate, double ram_budget,
       std::string mem_index_path, std::string medoids_file,
-      std::string centroids_file);
+      std::string centroids_file, std::string known_cluster_center_path);
 
   template<typename T>
   DISKANN_DLLEXPORT uint32_t optimize_beamwidth(

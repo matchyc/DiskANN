@@ -541,7 +541,7 @@ namespace diskann {
       return;
     assert(std::is_sorted(pool.begin(), pool.end()));
     assert(!pool.empty());
-
+    // diskann::cout << "In occlude_list pool size: " << pool.size() << '\n';
     float cur_alpha = 1;
     while (cur_alpha <= alpha && result.size() < degree) {
       unsigned start = 0;
@@ -617,6 +617,8 @@ namespace diskann {
         pruned_list.emplace_back(iter.id);
     }
 
+
+    // pruned_list not enough, supplement
     if (_saturate_graph && alpha > 1) {
       for (uint32_t i = 0; i < pool.size() && pruned_list.size() < range; i++) {
         if ((std::find(pruned_list.begin(), pruned_list.end(), pool[i].id) ==
@@ -768,7 +770,7 @@ namespace diskann {
     Lvec.push_back(L);
     Lvec.push_back(L);
     const unsigned NUM_RNDS = 2;
-
+    
     // Max degree of graph
     // Pruning parameter
     // Set alpha=1 for the first pass; use specified alpha for last pass
@@ -780,6 +782,11 @@ namespace diskann {
     for (unsigned i = 0; i < (unsigned) _nd; i++) {
       visit_order.emplace_back(i);
     }
+
+
+
+    // auto engine = std::default_random_engine{};
+    // std::shuffle(std::begin(visit_order), std::end(visit_order), engine);
 
     for (unsigned i = 0; i < (unsigned) _num_frozen_pts; ++i)
       visit_order.emplace_back((unsigned) (_max_points + i));
@@ -799,6 +806,7 @@ namespace diskann {
       
     for (uint64_t p = 0; p < _max_points + _num_frozen_pts; p++) {
       _final_graph[p].reserve((size_t)(std::ceil(range * SLACK_FACTOR * 1.05)));
+      // diskann::cout << "current final_graph[" << p << "] size: " << _final_graph[p].size() << '\n';
     } 
 
     std::random_device               rd;
@@ -809,6 +817,18 @@ namespace diskann {
     // random other nodes
     std::set<unsigned> unique_start_points;
     unique_start_points.insert(_ep);
+    
+    std::vector<uint32_t> ep_ids;
+    // read 6002 ep;
+    size_t eps_num, eps_dim;
+    get_bin_metadata(eps_coord_path_, eps_num, eps_dim);
+    // std::unique_ptr<float> eps_coord = std::make_unique<float>(eps_num * eps_dim);
+    // load_bin(eps_coord_path_, eps_coord, eps_num, eps_dim);
+    for(size_t i = 0; i < eps_num; ++i) {
+      uint32_t temp = 0;
+      eps_reader_.read((char *)(&temp), sizeof(uint32_t));
+      ep_ids.push_back(temp);
+    }
 
     std::vector<unsigned> init_ids;
     for (auto pt : unique_start_points)
@@ -858,8 +878,25 @@ namespace diskann {
           std::vector<Neighbor> pool;
           pool.reserve(L * 2);
           visited.reserve(L * 2);
+          std::vector<unsigned> one_init_ids;
+
+          float min_dist = std::numeric_limits<float>::max();
+          uint32_t nearest_ep = ep_ids[0];
+          for (size_t j = 0; j < eps_num; ++j) {
+            // 96 :  aligned, also 96 so, don't bother
+            float dist = 
+                  _distance->compare(_data + _aligned_dim * (size_t) node,
+                                            _data + _aligned_dim * (size_t) ep_ids[j],
+                                            (unsigned) _aligned_dim);
+            if (dist < min_dist) {
+              nearest_ep = ep_ids[j];
+            }
+          }
+          one_init_ids.push_back(nearest_ep);
+          for (auto pt : unique_start_points)
+            one_init_ids.emplace_back(pt);
           // mark: here 2021-12-13 21:15 chenmeng
-          get_expanded_nodes(node, L, init_ids, pool, visited);
+          get_expanded_nodes(node, L, one_init_ids, pool, visited);
           /* check the neighbors of the query that are not part of
            * visited, check their distance to the query, and add it to
            * pool.
@@ -875,6 +912,8 @@ namespace diskann {
                 visited.insert(id);
               }
             }
+          
+          // prune by RNG rules.
           prune_neighbors(node, pool, parameters, pruned_list);
         }
         diff = std::chrono::high_resolution_clock::now() - s;
@@ -889,6 +928,7 @@ namespace diskann {
           size_t                 node_offset = node_ctr - start_id;
           std::vector<unsigned> &pruned_list = pruned_list_vector[node_offset];
           _final_graph[node].clear();
+          // edge: iterate_target -> visited nodes
           for (auto id : pruned_list)
             _final_graph[node].emplace_back(id);
         }
@@ -899,6 +939,8 @@ namespace diskann {
           auto                   node = visit_order[node_ctr];
           _u64                   node_offset = node_ctr - start_id;
           std::vector<unsigned> &pruned_list = pruned_list_vector[node_offset];
+
+            // edge: visited nodes -> iterate_target
           batch_inter_insert(node, pruned_list, parameters, need_to_sync);
           //          inter_insert(node, pruned_list, parameters, 0);
           pruned_list.clear();
@@ -910,6 +952,9 @@ namespace diskann {
              node_ctr++) {
           auto node = visit_order[node_ctr];
           if (need_to_sync[node] != 0) {
+            // lock_.lock();
+            // build_writer_ << node << ',' << '\n';
+            // lock_.unlock();
             need_to_sync[node] = 0;
             inter_count++;
             tsl::robin_set<unsigned> dummy_visited(0);
@@ -938,7 +983,7 @@ namespace diskann {
         diff = std::chrono::high_resolution_clock::now() - s;
         inter_time += diff.count();
 
-        if ((sync_num * 100) / NUM_SYNCS > progress_counter) {
+        // if ((sync_num * 100) / NUM_SYNCS > progress_counter) {
           diskann::cout.precision(4);
           diskann::cout << "Completed  (round: " << rnd_no
                         << ", sync: " << sync_num << "/" << NUM_SYNCS
@@ -953,7 +998,13 @@ namespace diskann {
           inter_time = 0;
           inter_count = 0;
           progress_counter += 5;
-        }
+        // }
+
+        // for (_s64 node_ctr = start_id; node_ctr < (_s64) end_id; ++node_ctr) {
+        //   auto                   node = visit_order[node_ctr];
+        //   _u64                   node_offset = node_ctr - start_id;
+        //   diskann::cout << "After round, _final_graph[" << node << "] size: " << _final_graph[node].size() << '\n';
+        // }
       }
 // Gopal. Splittng diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
@@ -1015,6 +1066,17 @@ namespace diskann {
       }
     }
     diskann::cout << "Starting index build..." << std::endl;
+
+    // build_writer_.open("/home/cm/projects/ann/exp_result/check_L_needed/deep10M_need_2_prune_nodes.csv", std::ofstream::out | std::ios::trunc);
+    diskann::cerr << "xiber " << parameters.Get<std::string>("known_cluster_center_path");
+    eps_reader_.open(std::string(parameters.Get<std::string>("known_cluster_center_path")) + eps_id_path_, std::ifstream::in | std::ios::binary);
+    eps_coord_path_ = std::string(parameters.Get<std::string>("known_cluster_center_path")) + eps_coord_path_;
+    if (!eps_reader_.is_open()) {
+      diskann::cerr << "open eps_reader_ failed, path: " << std::string(parameters.Get<std::string>("known_cluster_center_path")) + eps_id_path_;
+      exit(-2);
+    } else {
+      eps_reader_.seekg(8);
+    }
     link(parameters);  // Primary func for creating graph
 
     if (_support_eager_delete) {

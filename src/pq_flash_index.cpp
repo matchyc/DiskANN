@@ -53,8 +53,15 @@
 
 // returns region of `node_buf` containing [COORD(T)]
 #define OFFSET_TO_NODE_COORDS(node_buf) (T *) (node_buf)
-
-namespace {
+using pair_u32_float = std::pair<uint32_t, float>;
+struct cmp {
+  bool operator()(const pair_u32_float &a,const pair_u32_float&b)
+	{
+		return a.second>b.second;	
+	}
+};
+namespace
+{
   void aggregate_coords(const unsigned *ids, const _u64 n_ids,
                         const _u8 *all_coords, const _u64 ndims, _u8 *out) {
     for (_u64 i = 0; i < n_ids; i++) {
@@ -81,7 +88,7 @@ namespace {
       }
     }
   }
-}  // namespace
+} // namespace
 
 namespace diskann {
   template<>
@@ -203,6 +210,8 @@ namespace diskann {
       reader->close();
       // delete reader; //not deleting reader because it is now passed by ref.
     }
+    delete[] ep_data ;
+    delete[] ep_ids;
   }
 
   template<typename T>
@@ -592,7 +601,7 @@ namespace diskann {
 #else
   template<typename T>
   int PQFlashIndex<T>::load(uint32_t num_threads, const char *pq_prefix,
-                            const char *disk_index_file) {
+                            const char *disk_index_file,const char *ep_file_index) {
 #endif
     std::string pq_table_bin = std::string(pq_prefix) + "_pivots.bin";
     std::string pq_compressed_vectors =
@@ -790,6 +799,7 @@ namespace diskann {
       num_medoids = 1;
       medoids = new uint32_t[1];
       medoids[0] = (_u32)(medoid_id_on_file);
+      // std::cout << " here medoids : " << medoids[0] << std::endl;
       use_medoids_data_as_centroids();
     }
 
@@ -805,6 +815,15 @@ namespace diskann {
       delete[] norm_val;
     }
     diskann::cout << "done.." << std::endl;
+    std::string ep_file = std::string(ep_file_index) + "_disk.entry_points.bin";
+    std::string ep_file_id = std::string(ep_file_index) + "_disk.entry_points_ids.bin";
+
+    if(file_exists(ep_file) && file_exists(ep_file_id)){
+      diskann::load_bin<float>(ep_file, ep_data, ep_npts, ep_dim);
+      size_t ep_id_npts, ep_id_dim;
+      diskann::load_bin<uint32_t>(ep_file_id, ep_ids, ep_id_npts, ep_id_dim);
+      std::cout << "read ep info done .." << std::endl;
+    }
     return 0;
   }
 
@@ -831,7 +850,7 @@ namespace diskann {
                                            const _u64 l_search, _u64 *indices,
                                            float *     distances,
                                            const _u64  beam_width,
-                                           QueryStats *stats) {
+                                           QueryStats *stats, int index_) {
     ThreadData<T> data = this->thread_data.pop();
     while (data.scratch.sector_scratch == nullptr) {
       this->thread_data.wait_for_push_notify();
@@ -911,16 +930,39 @@ namespace diskann {
     _u32                        best_medoid = 0;
     float                       best_dist = (std::numeric_limits<float>::max)();
     std::vector<SimpleNeighbor> medoid_dists;
-    for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
+
+    
+    // std::priority_queue<pair_u32_float, std::vector<pair_u32_float>, cmp> q;
+
+    for (_u64 cur_m = 0; cur_m < ep_npts; cur_m++)
+    {
       float cur_expanded_dist = dist_cmp_float->compare(
-          query_float, centroid_data + aligned_dim * cur_m,
-          (unsigned) aligned_dim);
+          query_float, ep_data + ep_dim * cur_m,
+          (unsigned) ep_dim);
       if (cur_expanded_dist < best_dist) {
-        best_medoid = medoids[cur_m];
+        best_medoid = ep_ids[cur_m];
         best_dist = cur_expanded_dist;
       }
+      // q.push(std::make_pair(ep_best[cur_m], cur_expanded_dist));
     }
+    // std::cout << "best medoids : " << best_medoid << std::endl;
 
+    // best_medoid = ep_best[index_];
+    // best_dist = dis_best[index_];
+    // int ep_num = 10;
+    // for (int i = 0; i < ep_num;++i){
+    //   best_medoid = q.top().first;
+    //   q.pop();
+    //   compute_dists(&best_medoid, 1, dist_scratch);
+    //   retset[i].id = best_medoid;
+    //   retset[i].distance = dist_scratch[0];
+    //   retset[i].flag = true;
+    //   visited.insert(best_medoid);
+    //   vector_visited.push_back(best_medoid);
+    // }
+    // unsigned cur_list_size = ep_num;
+    
+    // single ep 
     compute_dists(&best_medoid, 1, dist_scratch);
 
     retset[0].id = best_medoid;
@@ -1031,6 +1073,64 @@ namespace diskann {
         }
       }
 
+      // // process cached nhoods
+      // for (auto &cached_nhood : cached_nhoods) {
+      //   auto  global_cache_iter = coord_cache.find(cached_nhood.first);
+      //   T *   node_fp_coords_copy = global_cache_iter->second;
+      //   float cur_expanded_dist;
+      //   if (!use_disk_index_pq) {
+      //     cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy,
+      //                                           (unsigned) aligned_dim);
+      //   } else {
+      //     if (metric == diskann::Metric::INNER_PRODUCT)
+      //       cur_expanded_dist = disk_pq_table.inner_product(
+      //           query_float, (_u8 *) node_fp_coords_copy);
+      //     else
+      //       cur_expanded_dist = disk_pq_table.l2_distance(
+      //           query_float, (_u8 *) node_fp_coords_copy);
+      //   }
+      //   full_retset.push_back(
+      //       Neighbor((unsigned) cached_nhood.first, cur_expanded_dist, true));
+
+      //   _u64      nnbrs = cached_nhood.second.first;
+      //   unsigned *node_nbrs = cached_nhood.second.second;
+
+      //   // compute node_nbrs <-> query dists in PQ space
+      //   cpu_timer.reset();
+      //   compute_dists(node_nbrs, nnbrs, dist_scratch);
+      //   if (stats != nullptr) {
+      //     stats->n_cmps += nnbrs;
+      //     stats->cpu_us += cpu_timer.elapsed();
+      //   }
+
+      //   // process prefetched nhood
+      //   for (_u64 m = 0; m < nnbrs; ++m) {
+      //     unsigned id = node_nbrs[m];
+      //     if (visited.find(id) != visited.end()) {
+      //       continue;
+      //     } else {
+      //       visited.insert(id);
+      //       vector_visited.push_back(id);
+      //       cmps++;
+      //       float dist = dist_scratch[m];
+      //       // diskann::cout << "cmp: " << id << ", dist: " << dist <<
+      //       // std::endl; std::cerr << "dist: " << dist << std::endl;
+      //       if (dist >= retset[cur_list_size - 1].distance &&
+      //           (cur_list_size == l_search))
+      //         continue;
+      //       Neighbor nn(id, dist, true);
+      //       auto     r = InsertIntoPool(
+      //           retset.data(), cur_list_size,
+      //           nn);  // Return position in sorted list where nn inserted.
+      //       if (cur_list_size < l_search)
+      //         ++cur_list_size;
+      //       if (r < nk)
+      //         nk = r;  // nk logs the best position in the retset that was
+      //       // updated
+      //       // due to neighbors of n.
+      //     }
+      //   }
+      // }
 #ifdef USE_BING_INFRA
       // process each frontier nhood - compute distances to unvisited nodes
       int completedIndex = -1;

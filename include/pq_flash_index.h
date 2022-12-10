@@ -81,7 +81,7 @@ namespace diskann {
 #else
     // load compressed data, and obtains the handle to the disk-resident index
     DISKANN_DLLEXPORT int  load(uint32_t num_threads, const char *pq_prefix,
-                                const char *disk_index_file);
+                                const char *disk_index_file,const char *ep_file_index = "null");
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
@@ -113,7 +113,7 @@ namespace diskann {
     // implemented
     DISKANN_DLLEXPORT void cached_beam_search(
         const T *query, const _u64 k_search, const _u64 l_search, _u64 *res_ids,
-        float *res_dists, const _u64 beam_width, QueryStats *stats = nullptr);
+        float *res_dists, const _u64 beam_width, QueryStats *stats = nullptr,int index_ = -1);
 
 
   DISKANN_DLLEXPORT _u32 range_search(const T *query1, const double range,
@@ -196,6 +196,10 @@ namespace diskann {
     bool                           load_flag = false;
     bool                           count_visited_nodes = false;
 
+    uint32_t *ep_ids;
+    float *ep_data;
+    size_t ep_npts;
+    size_t ep_dim;
 #ifdef EXEC_ENV_OLS
     // Set to a larger value than the actual header to accommodate
     // any additions we make to the header. This is an outer limit

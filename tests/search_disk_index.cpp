@@ -80,6 +80,7 @@ int search_disk_index(int argc, char** argv) {
   ctr++;
 
   std::string index_prefix_path(argv[ctr++]);
+  std::string search_perf_path = index_prefix_path + "_search_perf.csv";
   std::string pq_prefix = index_prefix_path + "_pq";
   std::string disk_index_file = index_prefix_path + "_disk.index";
   std::string warmup_query_file = index_prefix_path + "_sample_data.bin";
@@ -90,10 +91,10 @@ int search_disk_index(int argc, char** argv) {
   std::string truthset_bin(argv[ctr++]);
   _u64        recall_at = std::atoi(argv[ctr++]);
   std::string result_output_prefix(argv[ctr++]);
-
+  
   bool calc_recall_flag = false;
 
-  for (; ctr < (_u32) argc; ctr++) {
+  for (; ctr < (_u32) argc - 1; ctr++) {
     _u64 curL = std::atoi(argv[ctr]);
     if (curL >= recall_at)
       Lvec.push_back(curL);
@@ -105,6 +106,8 @@ int search_disk_index(int argc, char** argv) {
         << std::endl;
     return -1;
   }
+
+  std::string ep_file_index(argv[ctr++]);
 
   diskann::cout << "Search parameters: #threads: " << num_threads << ", ";
   if (beamwidth <= 0)
@@ -140,21 +143,21 @@ int search_disk_index(int argc, char** argv) {
       new diskann::PQFlashIndex<T>(reader, metric));
 
   int res = _pFlashIndex->load(num_threads, pq_prefix.c_str(),
-                               disk_index_file.c_str());
+                               disk_index_file.c_str(), ep_file_index.c_str());
 
   if (res != 0) {
     return res;
   }
   // cache bfs levels
-  std::vector<uint32_t> node_list;
-  diskann::cout << "Caching " << num_nodes_to_cache
-                << " BFS nodes around medoid(s)" << std::endl;
-  // _pFlashIndex->cache_bfs_levels(num_nodes_to_cache, node_list);
+  // std::vector<uint32_t> node_list;
+  // diskann::cout << "Caching " << num_nodes_to_cache
+  //               << " BFS nodes around medoid(s)" << std::endl;
+  //_pFlashIndex->cache_bfs_levels(num_nodes_to_cache, node_list);
   // _pFlashIndex->generate_cache_list_from_sample_queries(
   //      warmup_query_file, 15, 6, num_nodes_to_cache, num_threads, node_list);
   // _pFlashIndex->load_cache_list(node_list);
-  node_list.clear();
-  node_list.shrink_to_fit();
+  // node_list.clear();
+  // node_list.shrink_to_fit();
 
   omp_set_num_threads(num_threads);
 
@@ -194,7 +197,6 @@ int search_disk_index(int argc, char** argv) {
                                        warmup_result_ids_64.data() + (i * 1),
                                        warmup_result_dists.data() + (i * 1), 4);
     }
-    
     diskann::cout << "..done" << std::endl;
   }
 
@@ -219,7 +221,7 @@ int search_disk_index(int argc, char** argv) {
   std::vector<std::vector<float>>    query_result_dists(Lvec.size());
 
   uint32_t optimized_beamwidth = 2;
-  // std::ofstream res_ofs("/home/cm/projects/ann/exp_result/sub_hnsw_cmp/diskann.csv", std::ios::out);
+  std::ofstream res_ofs(search_perf_path, std::ios::out);
   for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++) {
     _u64 L = Lvec[test_id];
 
@@ -244,7 +246,7 @@ int search_disk_index(int argc, char** argv) {
           query + (i * query_aligned_dim), recall_at, L,
           query_result_ids_64.data() + (i * recall_at),
           query_result_dists[test_id].data() + (i * recall_at),
-          optimized_beamwidth, stats + i);
+          optimized_beamwidth, stats + i, i);
     }
     auto                          e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = e - s;
@@ -306,9 +308,10 @@ int search_disk_index(int argc, char** argv) {
     diskann::cout << "Mean cmps: " << mean_cmps << std::endl;
     diskann::cout << "Mean_cache_hit: " << mean_cache_hit << std::endl;
     diskann::cout << "mean_io_us: " << mean_io_us << std::endl;
-    // res_ofs << recall << "," << mean_latency << std::endl;
+    res_ofs << L << "," << recall << "," << mean_latency << "," << qps << "," << mean_ios << '\n';
   }
 
+  
   diskann::cout << "Done searching. Now saving results " << std::endl;
   _u64 test_id = 0;
   for (auto L : Lvec) {
@@ -333,14 +336,12 @@ int main(int argc, char** argv) {
   if (argc < 12) {
     diskann::cout
         << "Usage: " << argv[0]
-        << "  [index_type<float/int8/uint8>]  [dist_fn<l2/mips>] "
-           "[index_prefix_path] "
-           " [num_nodes_to_cache]  [num_threads]  [beamwidth (use 0 to "
-           "optimize internally)] "
-           " [query_file.bin]  [truthset.bin (use \"null\" for none)] "
-           " [K]  [result_output_prefix] "
-           " [L1]  [L2] etc.  See README for more information on parameters."
-        << std::endl;
+        << "   index_type<float/int8/uint8>   dist_fn<l2/mips>   "
+           "index_prefix_path   num_nodes_to_cache   "
+           "T(num_threads)   W(beamwidth)   "
+           "query_file.bin   truthset.bin(\"null\" for none)   "
+           "K   result_output_prefix   L1   L2 ..."
+           << std::endl;
     exit(-1);
   }
   if (std::string(argv[1]) == std::string("float"))
