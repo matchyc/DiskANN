@@ -81,6 +81,7 @@ int search_disk_index(int argc, char** argv) {
 
   std::string index_prefix_path(argv[ctr++]);
   std::string pq_prefix = index_prefix_path + "_pq";
+  std::string search_perf_path = index_prefix_path + "_search_perf.csv";
   std::string disk_index_file = index_prefix_path + "_disk.index";
   std::string warmup_query_file = index_prefix_path + "_sample_data.bin";
   _u64        num_nodes_to_cache = std::atoi(argv[ctr++]);
@@ -220,6 +221,7 @@ int search_disk_index(int argc, char** argv) {
 
   uint32_t optimized_beamwidth = 2;
   // std::ofstream res_ofs("/home/cm/projects/ann/exp_result/sub_hnsw_cmp/diskann.csv", std::ios::out);
+  std::ofstream res_ofs(search_perf_path, std::ios::out);
   for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++) {
     _u64 L = Lvec[test_id];
 
@@ -306,7 +308,7 @@ int search_disk_index(int argc, char** argv) {
     diskann::cout << "Mean cmps: " << mean_cmps << std::endl;
     diskann::cout << "Mean_cache_hit: " << mean_cache_hit << std::endl;
     diskann::cout << "mean_io_us: " << mean_io_us << std::endl;
-    // res_ofs << recall << "," << mean_latency << std::endl;
+    res_ofs << L << "," << recall << "," << mean_latency << "," << qps << "," << mean_ios << '\n';
   }
 
   diskann::cout << "Done searching. Now saving results " << std::endl;
