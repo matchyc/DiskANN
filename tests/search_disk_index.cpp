@@ -222,7 +222,12 @@ int search_disk_index(int argc, char** argv) {
   // std::ofstream res_ofs("/home/cm/projects/ann/exp_result/sub_hnsw_cmp/diskann.csv", std::ios::out);
   for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++) {
     _u64 L = Lvec[test_id];
-
+    std::string hop_base_path = "/home/cm/projects/ann/exp_result/diff_iter_build/original_each_l/bigann10M/L";
+    hop_base_path = hop_base_path + std::to_string(L) + ".txt";
+    if (test_id != 0) {
+      _pFlashIndex->hop_visited_writer.close();
+    }
+    _pFlashIndex->hop_visited_writer.open(hop_base_path, std::ofstream::out);
     if (beamwidth <= 0) {
       //    diskann::cout<<"Tuning beamwidth.." << std::endl;
       optimized_beamwidth =

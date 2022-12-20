@@ -946,6 +946,9 @@ namespace diskann {
     bool fflag = true;
     uint32_t col_l_search = l_search;
     while (k < cur_list_size) {
+
+      std::vector<uint32_t> one_hop_visited;
+      one_hop_visited.push_back(hops);
       auto nk = cur_list_size;
 
       // clear iteration state
@@ -1006,6 +1009,7 @@ namespace diskann {
           stats->n_hops++;
         for (_u64 i = 0; i < frontier.size(); i++) {
           auto                    id = frontier[i];
+          one_hop_visited.push_back(id);
           std::pair<_u32, char *> fnhood;
           fnhood.first = id;
           fnhood.second = sector_scratch + sector_scratch_idx * SECTOR_LEN;
@@ -1139,7 +1143,16 @@ namespace diskann {
         ++k;
 
       hops++;
+      for (size_t i = 0; i < one_hop_visited.size() && one_hop_visited.size() > 1; ++i) {
+        hop_visited_writer << one_hop_visited[i];
+        if (i != one_hop_visited.size() - 1) {
+          hop_visited_writer << ' ';
+        } else {
+          hop_visited_writer << '\n';
+        }
+      }
     }
+    hop_visited_writer << "query_done" << std::endl;
 
     // re-sort by distance
     std::sort(full_retset.begin(), full_retset.end(),
