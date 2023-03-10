@@ -131,6 +131,96 @@ namespace diskann {
   }
 
   template<typename T, typename TagT>
+  Index<T, TagT>::Index(
+                        const bool use_pruned_index,
+                        Metric m, const size_t dim, const size_t max_points,
+                        const bool dynamic_index, const bool enable_tags,
+                        const bool concurrent_consolidate,
+                        const bool pq_dist_build, const size_t num_pq_chunks,
+                        const bool use_opq)
+      : _dist_metric(m), _dim(dim), _max_points(max_points),
+        _dynamic_index(dynamic_index), _enable_tags(enable_tags),
+        _indexingMaxC(DEFAULT_MAXC), _query_scratch(nullptr),
+        _conc_consolidate(concurrent_consolidate),
+        _delete_set(new tsl::robin_set<unsigned>), _pq_dist(pq_dist_build),
+        _use_opq(use_opq), _num_pq_chunks(num_pq_chunks),
+        _create_pruned_index(use_pruned_index) {
+    if (dynamic_index && !enable_tags) {
+      throw ANNException("ERROR: Dynamic Indexing must have tags enabled.", -1,
+                         __FUNCSIG__, __FILE__, __LINE__);
+    }
+
+    if (_pq_dist) {
+      if (dynamic_index)
+        throw ANNException(
+            "ERROR: Dynamic Indexing not supported with PQ distance based "
+            "index construction",
+            -1, __FUNCSIG__, __FILE__, __LINE__);
+      if (m == diskann::Metric::INNER_PRODUCT)
+        throw ANNException(
+            "ERROR: Inner product metrics not yet supported with PQ distance "
+            "base index",
+            -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+
+    // data stored to _nd * aligned_dim matrix with necessary zero-padding
+    _aligned_dim = ROUND_UP(_dim, 8);
+
+    if (dynamic_index) {
+      _num_frozen_pts = 1;
+    }
+    // Sanity check. While logically it is correct, max_points = 0 causes
+    // downstream problems.
+    if (_max_points == 0) {
+      _max_points = 1;
+    }
+    const size_t total_internal_points = _max_points + _num_frozen_pts;
+
+    if (_pq_dist) {
+      if (_num_pq_chunks > _dim)
+        throw diskann::ANNException("ERROR: num_pq_chunks > dim", -1,
+                                    __FUNCSIG__, __FILE__, __LINE__);
+      alloc_aligned(((void **) &_pq_data),
+                    total_internal_points * _num_pq_chunks * sizeof(char),
+                    8 * sizeof(char));
+      std::memset(_pq_data, 0,
+                  total_internal_points * _num_pq_chunks * sizeof(char));
+    }
+    alloc_aligned(((void **) &_data),
+                  total_internal_points * _aligned_dim * sizeof(T),
+                  8 * sizeof(T));
+    std::memset(_data, 0, total_internal_points * _aligned_dim * sizeof(T));
+
+    _start = (unsigned) _max_points;
+
+    _final_graph.resize(total_internal_points);
+
+    _pruned_graph.resize(total_internal_points);
+
+    if (m == diskann::Metric::COSINE && std::is_floating_point<T>::value) {
+      // This is safe because T is float inside the if block.
+      this->_distance = (Distance<T> *) new AVXNormalizedCosineDistanceFloat();
+      this->_normalize_vecs = true;
+      diskann::cout << "Normalizing vectors and using L2 for cosine "
+                       "AVXNormalizedCosineDistanceFloat()."
+                    << std::endl;
+    } else {
+      this->_distance = get_distance_function<T>(m);
+    }
+
+    _locks = std::vector<non_recursive_mutex>(total_internal_points);
+    _prune_graph_locks = std::vector<non_recursive_mutex>(total_internal_points);
+
+    if (enable_tags) {
+      _location_to_tag.reserve(total_internal_points);
+      _tag_to_location.reserve(total_internal_points);
+    }
+    if (_create_pruned_index) {
+      _pruned_index = new diskann::Index<T, TagT>(false, m, dim, 0, dynamic_index, enable_tags);
+    }
+  }
+
+  template<typename T, typename TagT>
   Index<T, TagT>::~Index() {
     // Ensure that no other activity is happening before dtor()
     std::unique_lock<std::shared_timed_mutex> ul(_update_lock);
@@ -213,7 +303,7 @@ namespace diskann {
   _u64 Index<T, TagT>::save_graph(std::string graph_file) {
     std::ofstream out;
     open_file_to_write(out, graph_file);
-
+    uint64_t total_degree = 0;
     _u64 file_offset = 0;  // we will use this if we want
     out.seekp(file_offset, out.beg);
     _u64 index_size = 24;
@@ -231,7 +321,10 @@ namespace diskann {
                        ? (_u32) _final_graph[i].size()
                        : max_degree;
       index_size += (_u64) (sizeof(unsigned) * (GK + 1));
+      total_degree += _final_graph[i].size();
     }
+    
+    diskann::cout << "max degree: " << max_degree << " avg degree: " << static_cast<double>(total_degree) / static_cast<double>(_pruned_graph.size()) << std::endl;
     out.seekp(file_offset, out.beg);
     out.write((char *) &index_size, sizeof(uint64_t));
     out.write((char *) &max_degree, sizeof(_u32));
@@ -279,18 +372,34 @@ namespace diskann {
       std::string data_file = std::string(filename) + ".data";
       std::string delete_list_file = std::string(filename) + ".del";
 
+      std::string pruned_file = std::string(filename) + "_pruned";
+      std::string pruned_tags_file = pruned_file + ".tags";
+      std::string pruned_data_file = pruned_file + ".data";
+      std::string pruned_delete_list_file = pruned_file + ".del";
+
       // Because the save_* functions use append mode, ensure that
       // the files are deleted before save. Ideally, we should check
       // the error code for delete_file, but will ignore now because
       // delete should succeed if save will succeed.
       delete_file(graph_file);
       save_graph(graph_file);
+
       delete_file(data_file);
       save_data(data_file);
       delete_file(tags_file);
       save_tags(tags_file);
       delete_file(delete_list_file);
       save_delete_list(delete_list_file);
+ 
+      delete_file(pruned_file);
+      save_pruned_graph(pruned_file);
+
+      delete_file(pruned_data_file);
+      save_data(pruned_data_file);
+      delete_file(pruned_tags_file);
+      save_tags(pruned_tags_file);
+      delete_file(pruned_delete_list_file);
+      save_delete_list(pruned_delete_list_file);
     } else {
       diskann::cout << "Save index in a single file currently not supported. "
                        "Not saving the index."
@@ -301,6 +410,38 @@ namespace diskann {
 
     diskann::cout << "Time taken for save: " << timer.elapsed() / 1000000.0
                   << "s." << std::endl;
+  }
+  
+  template<typename T, typename TagT>
+  _u64 Index<T, TagT>::save_pruned_graph(std::string graph_file) {
+    std::ofstream out;
+    open_file_to_write(out, graph_file);
+    uint64_t total_degree = 0;
+    _u64 file_offset = 0;  // we will use this if we want
+    out.seekp(file_offset, out.beg);
+    _u64 index_size = 24;
+    _u32 max_degree = 0;
+    out.write((char *) &index_size, sizeof(uint64_t));
+    out.write((char *) &_max_observed_degree, sizeof(unsigned));
+    unsigned ep_u32 = _start;
+    out.write((char *) &ep_u32, sizeof(unsigned));
+    out.write((char *) &_num_frozen_pts, sizeof(_u64));
+    for (unsigned i = 0; i < _nd + _num_frozen_pts; i++) {
+      unsigned GK = (unsigned) _pruned_graph[i].size();
+      out.write((char *) &GK, sizeof(unsigned));
+      out.write((char *) _pruned_graph[i].data(), GK * sizeof(unsigned));
+      max_degree = _pruned_graph[i].size() > max_degree
+                       ? (_u32) _pruned_graph[i].size()
+                       : max_degree;
+      index_size += (_u64) (sizeof(unsigned) * (GK + 1));
+      total_degree += _pruned_graph[i].size();
+    }
+    out.seekp(file_offset, out.beg);
+    out.write((char *) &index_size, sizeof(uint64_t));
+    out.write((char *) &max_degree, sizeof(_u32));
+    out.close();
+    diskann::cout << "Pruned graph max degree: " << max_degree << " avg degree: " << static_cast<double>(total_degree) / static_cast<double>(_pruned_graph.size()) << std::endl;
+    return index_size;  // number of bytes written
   }
 
 #ifdef EXEC_ENV_OLS
@@ -585,6 +726,7 @@ namespace diskann {
                     << " Setting max points to: " << expected_num_points
                     << std::endl;
       _final_graph.resize(expected_num_points + _num_frozen_pts);
+      _pruned_graph.resize(expected_num_points + _num_frozen_pts);
       _max_points = expected_num_points;
     }
 #ifdef EXEC_ENV_OLS
@@ -987,6 +1129,21 @@ namespace diskann {
     }
   }
 
+  template<typename T>
+  std::vector<T> vector_difference(const std::vector<T> &v1, const std::vector<T> &v2){
+      //Make the result initially equal to v1
+      std::vector<T> result(v1);
+
+      //Remove the elements in v2 from the result
+      for(const T &element: v2){
+          const auto it = std::find(result.begin(), result.end(), element);
+          if(it != result.end()){
+              result.erase(it);
+          }
+      }
+      return result;
+  }
+
   template<typename T, typename TagT>
   void Index<T, TagT>::prune_neighbors(const unsigned         location,
                                        std::vector<Neighbor> &pool,
@@ -1032,6 +1189,29 @@ namespace diskann {
              pruned_list.end()) &&
             node.id != location)
           pruned_list.push_back(node.id);
+      }
+    }
+    std::vector<uint32_t> pool_ids;
+    for (auto& node: pool) {
+      pool_ids.push_back(node.id);
+    }
+    std::vector<uint32_t> prune_keep_diff = vector_difference<uint32_t>(pool_ids, pruned_list);
+
+    if (!prune_keep_diff.empty()) {
+      // diskann::cout << "current prune_keep_diff size: " << prune_keep_diff.size() << std::endl;
+      upsert_prune_graph(location, prune_keep_diff);
+    }
+  }
+
+  template<typename T, typename TagT>
+  void Index<T, TagT>::upsert_prune_graph(const uint32_t& src_node, std::vector<uint32_t>& pruned_nodes) {
+    {
+      LockGuard guard(_prune_graph_locks[src_node]);
+      std::vector<uint32_t>& cur_src_nbrs = _pruned_graph[src_node];
+      for (auto& node: pruned_nodes) {
+        if (std::find(cur_src_nbrs.begin(), cur_src_nbrs.end(), node) == cur_src_nbrs.end()) {
+          cur_src_nbrs.push_back(node);
+        }
       }
     }
   }
@@ -1515,6 +1695,76 @@ namespace diskann {
     auto retval =
         iterate_to_fixed_point(query, L, init_ids, scratch, true, true);
     NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
+
+    size_t pos = 0;
+    for (int i = 0; i < best_L_nodes.size(); ++i) {
+      if (best_L_nodes[i].id < _max_points) {
+        // safe because Index uses uint32_t ids internally 
+        // and IDType will be uint32_t or uint64_t
+        indices[pos] = (IdType) best_L_nodes[i].id;
+        if (distances != nullptr) {
+#ifdef EXEC_ENV_OLS
+          // DLVS expects negative distances
+          distances[pos] = best_L_nodes[i].distance;
+#else
+          distances[pos] = _dist_metric == diskann::Metric::INNER_PRODUCT
+                               ? -1 * best_L_nodes[i].distance
+                               : best_L_nodes[i].distance;
+#endif
+        }
+        pos++;
+      }
+      if (pos == K)
+        break;
+    }
+    if (pos < K) {
+      diskann::cerr << "Found fewer than K elements for query" << std::endl;
+    }
+
+    return retval;
+  }
+
+  template<typename T, typename TagT>
+  template<typename IdType>
+  std::pair<uint32_t, uint32_t> Index<T, TagT>::round_search(const T       *query,
+                                                       const size_t   K,
+                                                       const unsigned L,
+                                                       IdType        *indices,
+                                                       uint32_t round,
+                                                       float *distances) {
+    if (K > (uint64_t) L) {
+      throw ANNException("Set L to a value of at least K", -1, __FUNCSIG__,
+                         __FILE__, __LINE__);
+    }
+
+    ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);
+    auto                                      scratch = manager.scratch_space();
+
+    if (L > scratch->get_L()) {
+      diskann::cout << "Attempting to expand query scratch_space. Was created "
+                    << "with Lsize: " << scratch->get_L()
+                    << " but search L is: " << L << std::endl;
+      scratch->resize_for_new_L(L);
+      diskann::cout << "Resize completed. New scratch->L is "
+                    << scratch->get_L() << std::endl;
+    }
+
+    std::vector<unsigned> init_ids;
+    init_ids.push_back(_start);
+    std::shared_lock<std::shared_timed_mutex> lock(_update_lock);
+    auto retval =
+        iterate_to_fixed_point(query, L, init_ids, scratch, true, true);
+    NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
+    
+    if (round < 1) {
+      std::vector<uint32_t> one_query_result_ids(K);
+      std::vector<float> one_query_result_dists(K);
+      _pruned_index->set_entry_point(best_L_nodes[0].id);
+      _pruned_index->round_search(query, K, L, one_query_result_ids.data(), round + 1, one_query_result_dists.data());
+      for (size_t i = 0; i < one_query_result_dists.size(); ++i) {
+        best_L_nodes.insert(Neighbor(one_query_result_ids[i], one_query_result_dists[i]));
+      }
+    }
 
     size_t pos = 0;
     for (int i = 0; i < best_L_nodes.size(); ++i) {
@@ -2519,5 +2769,70 @@ namespace diskann {
   Index<int8_t, uint32_t>::search<uint32_t>(const int8_t *query, const size_t K,
                                             const unsigned L, uint32_t *indices,
                                             float *distances);
+
+
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<float, uint64_t>::round_search<uint64_t>
+      (const float *query, const size_t K, const unsigned L, uint64_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<float, uint64_t>::round_search<uint32_t>
+      (const float *query, const size_t K, const unsigned L, uint32_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<uint8_t, uint64_t>::round_search<uint64_t>
+      (const uint8_t *query, const size_t K, const unsigned L, uint64_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<uint8_t, uint64_t>::round_search<uint32_t>
+      (const uint8_t *query, const size_t K, const unsigned L, uint32_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<int8_t, uint64_t>::round_search<uint64_t>
+      (const int8_t *query, const size_t K, const unsigned L, uint64_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<int8_t, uint64_t>::round_search<uint32_t>
+      (const int8_t *query, const size_t K, const unsigned L, uint32_t *indices, uint32_t round,
+      float *distances);
+
+
+
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<float, uint32_t>::round_search<uint64_t>
+      (const float *query, const size_t K, const unsigned L, uint64_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<float, uint32_t>::round_search<uint32_t>
+      (const float *query, const size_t K, const unsigned L, uint32_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<uint8_t, uint32_t>::round_search<uint64_t>
+      (const uint8_t *query, const size_t K, const unsigned L, uint64_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<uint8_t, uint32_t>::round_search<uint32_t>
+      (const uint8_t *query, const size_t K, const unsigned L, uint32_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<int8_t, uint32_t>::round_search<uint64_t>
+      (const int8_t *query, const size_t K, const unsigned L, uint64_t *indices, uint32_t round,
+      float *distances);
+
+  template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> 
+  Index<int8_t, uint32_t>::round_search<uint32_t>
+      (const int8_t *query, const size_t K, const unsigned L, uint32_t *indices, uint32_t round,
+      float *distances);
 
 }  // namespace diskann

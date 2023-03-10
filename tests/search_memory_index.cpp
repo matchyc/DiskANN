@@ -55,10 +55,17 @@ int search_memory_index(diskann::Metric& metric, const std::string& index_path,
                   << " not found. Not computing recall." << std::endl;
   }
   using TagT = uint32_t;
-  diskann::Index<T, TagT> index(metric, query_dim, 0, dynamic, tags);
+  diskann::Index<T, TagT> index(true, metric, query_dim, 0, dynamic, tags);
+  
+  // diskann::Index<T, TagT> pruned_index(metric, query_dim, 0, dynamic, tags);
+  // pruned_index.load(std::string(index_path + "_pruned").c_str(), num_threads, *(std::max_element(Lvec.begin(), Lvec.end())));
+  
   std::cout << "Index class instantiated" << std::endl;
+  
   index.load(index_path.c_str(), num_threads,
              *(std::max_element(Lvec.begin(), Lvec.end())));
+  
+  index._pruned_index->load(std::string(index_path + "_pruned").c_str(), num_threads, *(std::max_element(Lvec.begin(), Lvec.end())));
   std::cout << "Index loaded" << std::endl;
   if (metric == diskann::FAST_L2)
     index.optimize_index_layout();
@@ -139,8 +146,8 @@ int search_memory_index(diskann::Metric& metric, const std::string& index_path,
       } else {
         cmp_stats[i] =
             index
-                .search(query + i * query_aligned_dim, recall_at, L,
-                        query_result_ids[test_id].data() + i * recall_at)
+                .round_search(query + i * query_aligned_dim, recall_at, L,
+                        query_result_ids[test_id].data() + i * recall_at, 0)
                 .second;
       }
       auto qe = std::chrono::high_resolution_clock::now();

@@ -19,7 +19,7 @@ project(diskann)
 
 cmake_minimum_required(VERSION 3.15)
 
-set(CMAKE_STANDARD 14)
+set(CMAKE_STANDARD 17)
 
 if(NOT MSVC)
 	set(CMAKE_CXX_COMPILER g++)

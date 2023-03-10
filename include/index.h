@@ -81,6 +81,17 @@ namespace diskann {
                             const bool   pq_dist_build = false,
                             const size_t num_pq_chunks = 0,
                             const bool   use_opq = false);
+    // Constructor with pruned index
+    DISKANN_DLLEXPORT Index(
+                            const bool  use_pruned_index,
+                            Metric m, const size_t dim,
+                            const size_t max_points = 1,
+                            const bool   dynamic_index = false,
+                            const bool   enable_tags = false,
+                            const bool   concurrent_consolidate = false,
+                            const bool   pq_dist_build = false,
+                            const size_t num_pq_chunks = 0,
+                            const bool   use_opq = false);
 
     // Constructor for incremental index
     DISKANN_DLLEXPORT Index(Metric m, const size_t dim, const size_t max_points,
@@ -147,6 +158,11 @@ namespace diskann {
     template<typename IDType>
     DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> search(
         const T *query, const size_t K, const unsigned L, IDType *indices,
+        float *distances = nullptr);
+
+    template<typename IDType>
+    DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> round_search(
+        const T *query, const size_t K, const unsigned L, IDType *indices, uint32_t round,
         float *distances = nullptr);
 
     // Initialize space for res_vectors before calling.
@@ -289,12 +305,16 @@ namespace diskann {
                                   uint32_t indexing_l, uint32_t r,
                                   uint32_t maxc, size_t dim);
 
+    void upsert_prune_graph(const uint32_t& src_node, std::vector<uint32_t>& pruned_nodes);
+    
     // Do not call without acquiring appropriate locks
     // call public member functions save and load to invoke these.
     DISKANN_DLLEXPORT _u64 save_graph(std::string filename);
     DISKANN_DLLEXPORT _u64 save_data(std::string filename);
     DISKANN_DLLEXPORT _u64 save_tags(std::string filename);
     DISKANN_DLLEXPORT _u64 save_delete_list(const std::string &filename);
+    
+    DISKANN_DLLEXPORT _u64 save_pruned_graph(std::string filename);
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT size_t load_graph(AlignedFileReader &reader,
                                         size_t             expected_num_points);
@@ -308,7 +328,12 @@ namespace diskann {
     DISKANN_DLLEXPORT size_t load_tags(const std::string tag_file_name);
     DISKANN_DLLEXPORT size_t load_delete_set(const std::string &filename);
 #endif
+   public:
+    diskann::Index<T, TagT>* _pruned_index = nullptr;
 
+    void set_entry_point(uint32_t new_ep) {
+        _start = new_ep;
+    }
    private:
     // Distance functions
     Metric       _dist_metric = diskann::L2;
@@ -320,6 +345,7 @@ namespace diskann {
 
     // Graph related data structures
     std::vector<std::vector<unsigned>> _final_graph;
+    std::vector<std::vector<uint32_t>> _pruned_graph;
 
     // Dimensions
     size_t _dim = 0;
@@ -348,6 +374,10 @@ namespace diskann {
     uint32_t _indexingMaxC;
     float    _indexingAlpha;
     uint32_t _search_queue_size;
+
+    // pruned_graph
+    uint32_t _pruned_max_degree = 0;
+    bool _create_pruned_index;
 
     // Query scratch data structures
     ConcurrentQueue<InMemQueryScratch<T> *> _query_scratch;
@@ -392,6 +422,8 @@ namespace diskann {
 
     // Per node lock, cardinality=_max_points
     std::vector<non_recursive_mutex> _locks;
+
+    std::vector<non_recursive_mutex> _prune_graph_locks;
 
     static const float INDEX_GROWTH_FACTOR;
   };
