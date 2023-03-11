@@ -930,13 +930,13 @@ namespace diskann {
 
     // std::cout << _start << std::endl;
     // std::cout << "best L node[0]" << best_L_nodes[0].id << std::endl; 
-    if (!is_not_visited(best_L_nodes[0].id) && _start != 41) {
-      // diskann::cout << "haha" << std::endl;
-      auto temp_vis_it = inserted_into_pool_rs.find(_start);
-      inserted_into_pool_rs.erase(temp_vis_it);
-      best_L_nodes._cur = 0;
-      best_L_nodes._data[0].expanded = false;
-    }
+    // if (!is_not_visited(best_L_nodes[0].id) && _start != 41) {
+    //   // diskann::cout << "haha" << std::endl;
+    //   auto temp_vis_it = inserted_into_pool_rs.find(_start);
+    //   inserted_into_pool_rs.erase(best_L_nodes[0].id);
+    //   best_L_nodes._cur = 0;
+    //   best_L_nodes._data[0].expanded = false;
+    // }
     // Lambda to batch compute query<-> node distances in PQ space
     auto compute_dists = [this, pq_coord_scratch, pq_dists](
                              const std::vector<unsigned> &ids,
@@ -1299,7 +1299,7 @@ namespace diskann {
                                        std::vector<unsigned> &pruned_list,
                                        InMemQueryScratch<T>  *scratch) {
     prune_pruned_graph_neighbors(location, pool, _indexingRange, _indexingMaxC,
-                    _indexingAlpha, pruned_list, scratch);
+                    1.2, pruned_list, scratch);
   }
 
   template<typename T, typename TagT>
@@ -1539,36 +1539,36 @@ namespace diskann {
       }
     }
 
-// #pragma omp parallel for schedule(dynamic, 2048)
-//     for (_s64 node_ctr = 0; node_ctr < (_s64) (visit_order.size());
-//          node_ctr++) {
-//       auto node = visit_order[node_ctr];
-//       if (_pruned_graph[node].size() > _indexingRange) {
-//         ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);
-//         auto scratch = manager.scratch_space();
+#pragma omp parallel for schedule(dynamic, 2048)
+    for (_s64 node_ctr = 0; node_ctr < (_s64) (visit_order.size());
+         node_ctr++) {
+      auto node = visit_order[node_ctr];
+      if (_pruned_graph[node].size() > _indexingRange) {
+        ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);
+        auto scratch = manager.scratch_space();
 
-//         tsl::robin_set<unsigned> dummy_visited(0);
-//         std::vector<Neighbor>    dummy_pool(0);
-//         std::vector<unsigned>    new_out_neighbors;
+        tsl::robin_set<unsigned> dummy_visited(0);
+        std::vector<Neighbor>    dummy_pool(0);
+        std::vector<unsigned>    new_out_neighbors;
 
-//         for (auto cur_nbr : _pruned_graph[node]) {
-//           if (dummy_visited.find(cur_nbr) == dummy_visited.end() &&
-//               cur_nbr != node) {
-//             float dist =
-//                 _distance->compare(_data + _aligned_dim * (size_t) node,
-//                                    _data + _aligned_dim * (size_t) cur_nbr,
-//                                    (unsigned) _aligned_dim);
-//             dummy_pool.emplace_back(Neighbor(cur_nbr, dist));
-//             dummy_visited.insert(cur_nbr);
-//           }
-//         }
-//         prune_pruned_graph_neighbors(node, dummy_pool, new_out_neighbors, scratch);
+        for (auto cur_nbr : _pruned_graph[node]) {
+          if (dummy_visited.find(cur_nbr) == dummy_visited.end() &&
+              cur_nbr != node) {
+            float dist =
+                _distance->compare(_data + _aligned_dim * (size_t) node,
+                                   _data + _aligned_dim * (size_t) cur_nbr,
+                                   (unsigned) _aligned_dim);
+            dummy_pool.emplace_back(Neighbor(cur_nbr, dist));
+            dummy_visited.insert(cur_nbr);
+          }
+        }
+        prune_pruned_graph_neighbors(node, dummy_pool, new_out_neighbors, scratch);
 
-//         _pruned_graph[node].clear();
-//         for (auto id : new_out_neighbors)
-//           _pruned_graph[node].emplace_back(id);
-//       }
-//     }
+        _pruned_graph[node].clear();
+        for (auto id : new_out_neighbors)
+          _pruned_graph[node].emplace_back(id);
+      }
+    }
     if (_nd > 0) {
       diskann::cout << "done. Link time: "
                     << ((double) link_timer.elapsed() / (double) 1000000) << "s"
@@ -1936,22 +1936,28 @@ namespace diskann {
 
     std::vector<unsigned> init_ids;
     init_ids.push_back(_start);
+
     std::shared_lock<std::shared_timed_mutex> lock(_update_lock);
     auto retval =
         iterate_to_fixed_point(query, L, init_ids, scratch, true, true);
     NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
-    
-    // if (round < 1) {
-    //   // std::vector<uint32_t> one_query_result_ids(K);
-    //   // std::vector<float> one_query_result_dists(K);
-    //   _pruned_index->set_entry_point(best_L_nodes[0].id);
-    //   auto ret =  _pruned_index->round_search(query, 5, 5, indices, round + 1, scratch, distances);
-    //   // diskann::cout << ret.first << ", " << ret.second << std::endl;
-    //   retval = std::make_pair(retval.first + ret.first, retval.second + ret.second);
-    //   // for (size_t i = 0; i < K; ++i) {
-    //   //   best_L_nodes.insert(Neighbor(indices[i], distances[i]));
-    //   // }
-    // }
+
+    if (round < 1) {
+      for (size_t i = 0; i < K; ++i) {
+        // scratch->inserted_into_pool_rs().erase(best_L_nodes[i].id);
+        best_L_nodes._data[i].expanded = false;
+      }
+      best_L_nodes._cur = 0;
+      // std::vector<uint32_t> one_query_result_ids(K);
+      // std::vector<float> one_query_result_dists(K);
+      _pruned_index->set_entry_point(best_L_nodes[0].id);
+      auto ret =  _pruned_index->round_search(query, K, L, indices, round + 1, scratch, distances);
+      // diskann::cout << ret.first << ", " << ret.second << std::endl;
+      retval = std::make_pair(retval.first + ret.first, retval.second + ret.second);
+      // for (size_t i = 0; i < K; ++i) {
+      //   best_L_nodes.insert(Neighbor(indices[i], distances[i]));
+      // }
+    }
 
     if (round < 1) {
       size_t pos = 0;

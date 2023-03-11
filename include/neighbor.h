@@ -101,9 +101,6 @@ namespace diskann {
     }
 
     void reserve(size_t capacity) {
-      if (capacity == _capacity) {
-        return;
-      }
       if (capacity + 1 > _data.size()) {
         _data.resize(capacity + 1);
       }
