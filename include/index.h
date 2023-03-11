@@ -163,6 +163,7 @@ namespace diskann {
     template<typename IDType>
     DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> round_search(
         const T *query, const size_t K, const unsigned L, IDType *indices, uint32_t round,
+        InMemQueryScratch<T>* in_scratch,
         float *distances = nullptr);
 
     // Initialize space for res_vectors before calling.
@@ -257,9 +258,24 @@ namespace diskann {
                          const float alpha, std::vector<unsigned> &pruned_list,
                          InMemQueryScratch<T> *scratch);
 
+    void prune_pruned_graph_neighbors(const unsigned location, std::vector<Neighbor> &pool,
+                         std::vector<unsigned> &pruned_list,
+                         InMemQueryScratch<T>  *scratch);
+
+    void prune_pruned_graph_neighbors(const unsigned location, std::vector<Neighbor> &pool,
+                         const _u32 range, const _u32 max_candidate_size,
+                         const float alpha, std::vector<unsigned> &pruned_list,
+                         InMemQueryScratch<T> *scratch);
+
     // Prunes candidates in @pool to a shorter list @result
     // @pool must be sorted before calling
     void occlude_list(
+        const unsigned location, std::vector<Neighbor> &pool, const float alpha,
+        const unsigned degree, const unsigned maxc,
+        std::vector<unsigned> &result, InMemQueryScratch<T> *scratch,
+        const tsl::robin_set<unsigned> *const delete_set_ptr = nullptr);
+
+    void occlude_pruned_graph_list(
         const unsigned location, std::vector<Neighbor> &pool, const float alpha,
         const unsigned degree, const unsigned maxc,
         std::vector<unsigned> &result, InMemQueryScratch<T> *scratch,
@@ -329,11 +345,16 @@ namespace diskann {
     DISKANN_DLLEXPORT size_t load_delete_set(const std::string &filename);
 #endif
    public:
+    ConcurrentQueue<InMemQueryScratch<T> *> _query_scratch;
     diskann::Index<T, TagT>* _pruned_index = nullptr;
 
     void set_entry_point(uint32_t new_ep) {
         _start = new_ep;
     }
+
+    // ConcurrentQueue<InMemQueryScratch<T> *> get_prune_index_scratch_ptr() {
+    //     return _query_scratch;
+    // }
    private:
     // Distance functions
     Metric       _dist_metric = diskann::L2;
@@ -380,7 +401,6 @@ namespace diskann {
     bool _create_pruned_index;
 
     // Query scratch data structures
-    ConcurrentQueue<InMemQueryScratch<T> *> _query_scratch;
 
     // Flags for PQ based distance calculation
     bool              _pq_dist = false;

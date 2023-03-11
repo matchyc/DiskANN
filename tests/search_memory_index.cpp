@@ -124,6 +124,7 @@ int search_memory_index(diskann::Metric& metric, const std::string& index_path,
     }
 
     query_result_ids[test_id].resize(recall_at * query_num);
+    query_result_dists[test_id].resize(recall_at * query_num);
     std::vector<T*> res = std::vector<T*>();
 
     auto s = std::chrono::high_resolution_clock::now();
@@ -147,7 +148,8 @@ int search_memory_index(diskann::Metric& metric, const std::string& index_path,
         cmp_stats[i] =
             index
                 .round_search(query + i * query_aligned_dim, recall_at, L,
-                        query_result_ids[test_id].data() + i * recall_at, 0)
+                        query_result_ids[test_id].data() + i * recall_at, 0, nullptr, 
+                        query_result_dists[test_id].data() + i * recall_at)
                 .second;
       }
       auto qe = std::chrono::high_resolution_clock::now();

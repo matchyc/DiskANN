@@ -44,7 +44,7 @@ namespace diskann {
     }
     
     // Inserts the item ordered into the set up to the sets capacity.
-    // The item will be dropped if it is the same id as an exiting 
+    // The item will be dropped if it is the same id as an existing 
     // set item or it has a greated distance than the final
     // item in the set. The set cursor that is used to pop() the 
     // next item will be set to the lowest index of an uncheck item 
@@ -101,6 +101,9 @@ namespace diskann {
     }
 
     void reserve(size_t capacity) {
+      if (capacity == _capacity) {
+        return;
+      }
       if (capacity + 1 > _data.size()) {
         _data.resize(capacity + 1);
       }
@@ -120,7 +123,7 @@ namespace diskann {
       _cur = 0;
     }
 
-   private:
+  //  private:
     size_t _size, _capacity, _cur;
     std::vector<Neighbor> _data;
   };
