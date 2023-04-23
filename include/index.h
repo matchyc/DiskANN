@@ -231,16 +231,32 @@ namespace diskann {
     void search_for_point_and_prune(int location, _u32 Lindex,
                                     std::vector<unsigned> &pruned_list,
                                     InMemQueryScratch<T>  *scratch);
+                                    
+    void search_for_point_and_prune(int location, _u32 Lindex,
+                                    std::vector<unsigned> &pruned_list,
+                                    InMemQueryScratch<T>  *scratch,
+                                    std::vector<unsigned> init_ids);
 
     void prune_neighbors(const unsigned location, std::vector<Neighbor> &pool,
                          std::vector<unsigned> &pruned_list,
                          InMemQueryScratch<T>  *scratch);
+
 
     void prune_neighbors(const unsigned location, std::vector<Neighbor> &pool,
                          const _u32 range, const _u32 max_candidate_size,
                          const float alpha, std::vector<unsigned> &pruned_list,
                          InMemQueryScratch<T> *scratch);
 
+    void keep_neighbors(const unsigned location, std::vector<Neighbor> &pool,
+                        std::vector<unsigned> &pruned_list,
+                        InMemQueryScratch<T>  *scratch);
+
+    void keep_neighbors(const unsigned location, std::vector<Neighbor> &pool,
+                        const _u32 range, const _u32 max_candidate_size,
+                        const float alpha, std::vector<unsigned> &pruned_list,
+                        InMemQueryScratch<T> *scratch);
+
+    void contest_link(Parameters &parameters);
     // Prunes candidates in @pool to a shorter list @result
     // @pool must be sorted before calling
     void occlude_list(

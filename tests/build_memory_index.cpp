@@ -38,7 +38,7 @@ int build_in_memory_index(const diskann::Metric& metric,
 
   _u64 data_num, data_dim;
   diskann::get_bin_metadata(data_path, data_num, data_dim);
-
+  std::cout << "data num " << data_num << " data dim " << data_dim << "\n";
   diskann::Index<T, TagT> index(metric, data_dim, data_num, false, false, false,
                                 use_pq_build, num_pq_bytes, use_opq);
   auto                    s = std::chrono::high_resolution_clock::now();

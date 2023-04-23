@@ -241,7 +241,11 @@ namespace diskann {
     int nrows_32, ncols_32;
     reader.seekg(offset, reader.beg);
     reader.read((char*) &nrows_32, sizeof(int));
-    reader.read((char*) &ncols_32, sizeof(int));
+    // reader.read((char*) &ncols_32, sizeof(int));
+    reader.seekg(0, std::ios::end);
+    auto file_size = reader.tellg();
+    file_size -= 4;
+    ncols_32 = file_size / (sizeof(float) * nrows_32);
     nrows = nrows_32;
     ncols = ncols_32;
   }
@@ -865,9 +869,9 @@ namespace diskann {
 
     int npts_i32, dim_i32;
     reader.read((char*) &npts_i32, sizeof(int));
-    reader.read((char*) &dim_i32, sizeof(int));
+    // reader.read((char*) &dim_i32, sizeof(int));
     npts = (unsigned) npts_i32;
-    dim = (unsigned) dim_i32;
+    dim = (unsigned) (get_file_size(bin_file) - sizeof(uint32_t)) / (npts * sizeof(T));
 
     for (size_t i = 0; i < npts; i++) {
       reader.read((char*) (data + i * rounded_dim), dim * sizeof(T));
