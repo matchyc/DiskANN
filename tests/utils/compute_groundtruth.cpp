@@ -29,7 +29,8 @@
 
 // WORKS FOR UPTO 2 BILLION POINTS (as we use INT INSTEAD OF UNSIGNED)
 
-#define PARTSIZE 10000000
+#define PARTSIZE 20000000
+// #define PARTSIZE 5000000
 #define ALIGNMENT 512
 
 namespace po = boost::program_options;
@@ -183,7 +184,7 @@ void exact_knn(
     std::cout << " L2 ";
   std::cout << "distance fn. " << std::endl;
 
-  size_t q_batch_size = (1 << 9);
+  size_t q_batch_size = (1 << 10);
   float *dist_matrix = new float[(size_t) q_batch_size * (size_t) npoints];
 
   for (_u64 b = 0; b < div_round_up(nqueries, q_batch_size); ++b) {
